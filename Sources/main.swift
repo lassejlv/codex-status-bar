@@ -416,7 +416,8 @@ final class StatusController: NSObject, NSMenuDelegate {
                 let now = Date().timeIntervalSince1970
                 let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
                 let view = SessionRowView(id: s.id, width: CGFloat(uiConfig()["boxWidth"] ?? 300))
-                view.onClick = { [weak self] in menu.cancelTracking(); self?.openClaude() }
+                let sid = s.id, ep = s.entrypoint
+                view.onClick = { [weak self] in menu.cancelTracking(); self?.openSession(sid, entrypoint: ep) }
                 configureSessionRow(view, s, eff: eff)
                 let it = NSMenuItem()
                 it.view = view
@@ -717,6 +718,17 @@ final class StatusController: NSObject, NSMenuDelegate {
         if let url = ws.urlForApplication(withBundleIdentifier: "com.anthropic.claudefordesktop") {
             ws.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
         }
+    }
+
+    // Desktop session click: just focus the Claude app. Do NOT use claude://resume?session=<id>,
+    // that calls importCliSession() and spawns a duplicate "ungrouped" session record
+    // (local_<random>.json with cliSessionId=<id>) every click, it's an import verb, not focus.
+    // The clean focus path (claude://code/<bridgeSessionId>) needs an opaque session_/cse_ bridge
+    // id the app never exposes to us (not in env, not derivable from the UUID, undefined on disk).
+    // So app-to-front is the safe behavior. CLI sessions: no-op for now (terminal focus = issue #19).
+    func openSession(_ id: String, entrypoint: String) {
+        guard entrypoint == "claude-desktop" else { return }
+        openClaude()
     }
 
 

@@ -9,10 +9,15 @@ BIN="$APP/Contents/MacOS/ClaudeStatusBar"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 
-echo "Compiling…"
-# Pin the deployment target, else swiftc stamps the binary with the build machine's OS
-# (e.g. macOS 26), making it refuse to launch on older systems despite LSMinimumSystemVersion.
-swiftc -O -target arm64-apple-macos12.0 Sources/*.swift -o "$BIN" -framework Cocoa
+echo "Compiling universal binary (arm64 + x86_64)…"
+# Universal binary so it runs natively on both Apple Silicon and Intel (each Mac uses its own
+# slice, so Rosetta is never involved). swiftc emits one arch per -target, so this is two
+# compiles joined by lipo. Keep the deployment target pinned, else swiftc stamps the binary
+# with the build machine's OS and it refuses to launch on older systems despite LSMinimumSystemVersion.
+swiftc -O -target arm64-apple-macos12.0  Sources/*.swift -o "$BIN.arm64"  -framework Cocoa
+swiftc -O -target x86_64-apple-macos12.0 Sources/*.swift -o "$BIN.x86_64" -framework Cocoa
+lipo -create "$BIN.arm64" "$BIN.x86_64" -output "$BIN"
+rm -f "$BIN.arm64" "$BIN.x86_64"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
