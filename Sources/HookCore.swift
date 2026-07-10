@@ -105,6 +105,24 @@ enum PetAnimation: String {
         }
         return durations.count - 1
     }
+
+    static func fallback(state: String, label: String) -> PetAnimation {
+        switch state {
+        case "idle": return .idle
+        case "permission": return .waiting
+        case "done": return .jump
+        case "failed": return .failed
+        case "thinking": return .working
+        case "tool":
+            switch label {
+            case "Running command": return .runRight
+            case "Editing": return .wave
+            case "Reading", "Searching", "Browsing web": return .review
+            default: return .working
+            }
+        default: return .idle
+        }
+    }
 }
 
 enum StatusPolicy {
@@ -118,6 +136,12 @@ enum StatusPolicy {
 
     static func shouldAnimate(userEnabled: Bool, reduceMotion: Bool) -> Bool {
         userEnabled && !reduceMotion
+    }
+
+    static func effectiveState(rawState: String, age: Double) -> String {
+        guard rawState == "done" else { return rawState }
+        let jumpDuration = Double(PetAnimation.jump.totalDurationMilliseconds) / 1000.0
+        return age < jumpDuration ? "done" : "idle"
     }
 
     static func versionIsNewer(_ candidate: String, than current: String) -> Bool {

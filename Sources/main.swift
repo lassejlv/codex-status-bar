@@ -254,7 +254,6 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     var pollTimer: Timer?
     var animTimer: Timer?
-    var frameIdx = 0
 
     let launchedAt = Date()
     var notNeededSince: Date?
@@ -267,6 +266,7 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     struct Session {
         var id: String, state: String, label: String, project: String, transcript: String, turnID: String
+        var animation: PetAnimation
         var cwd: String         // session working directory; "" on pre-upgrade files
         var entrypoint: String  // reliable surface hint when Codex exposes one
         var termProgram: String // TERM_PROGRAM for CLI sessions: "Apple_Terminal", "iTerm.app", …
@@ -282,6 +282,8 @@ final class StatusController: NSObject, NSMenuDelegate {
             self.id = id
             self.state = o["state"] as? String ?? "idle"
             self.label = o["label"] as? String ?? ""
+            self.animation = (o["animation"] as? String).flatMap(PetAnimation.init(rawValue:))
+                ?? PetAnimation.fallback(state: self.state, label: self.label)
             self.project = o["project"] as? String ?? ""
             self.transcript = o["transcript"] as? String ?? ""
             self.turnID = o["turnId"] as? String ?? ""
@@ -301,7 +303,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     var sessionMenuItems: [(item: NSMenuItem, id: String)] = []
     var activeBase = ""        // label without the elapsed clock
     var startedAt: Double = 0  // unix seconds the current turn began (0 = no clock)
-    var activeColor: NSColor? = nil
+    var activeAnimation = PetAnimation.idle
+    var animationStartedAt: Double = Date().timeIntervalSince1970
+    var activeDotColor: NSColor?
 
     let amber = NSColor(srgbRed: 0.95, green: 0.73, blue: 0.18, alpha: 1) // "awaiting permission" yellow dot
     var animateIcon = true
@@ -335,9 +339,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         "Thinking", "Thundering", "Tinkering", "Tomfoolering", "Transfiguring", "Transmuting", "Twisting",
         "Undulating", "Unfurling", "Unravelling", "Vibing", "Waddling", "Wandering", "Warping",
         "Whirlpooling", "Whirring", "Whisking", "Wibbling", "Working", "Wrangling", "Zesting", "Zigzagging"]
-    var iconColor: NSColor? { nil } // the Codex pet mark keeps its native full color
     let fps: Double = 20
-    let frameCount = 18 // six working frames, held for three timer ticks each
 
     override init() {
         super.init()
@@ -348,7 +350,8 @@ final class StatusController: NSObject, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
-        render(label: "", color: iconColor, animate: false, startedAt: 0)
+        render(label: "", animation: .idle, labelStartedAt: 0,
+               animationStartedAt: launchedAt.timeIntervalSince1970)
         let t = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in self?.tick() }
         RunLoop.main.add(t, forMode: .common)
         pollTimer = t
@@ -884,15 +887,23 @@ final class StatusController: NSObject, NSMenuDelegate {
         guard let lead = lead else { renderResting(); return }
         switch lead.eff {
         case "permission":
-            render(label: statusText(lead, eff: lead.eff), color: amber, animate: false, startedAt: 0, dot: true)
+            render(label: statusText(lead, eff: lead.eff), animation: .waiting, labelStartedAt: 0,
+                   animationStartedAt: lead.ts, dotColor: amber)
         case "thinking", "tool":
-            render(label: statusText(lead, eff: lead.eff), color: iconColor, animate: true, startedAt: lead.startedAt)
+            render(label: statusText(lead, eff: lead.eff), animation: lead.animation,
+                   labelStartedAt: lead.startedAt, animationStartedAt: lead.ts)
+        case "done":
+            render(label: statusText(lead, eff: lead.eff), animation: .jump,
+                   labelStartedAt: 0, animationStartedAt: lead.ts)
         default:
             renderResting()
         }
     }
 
-    func renderResting() { render(label: "", color: iconColor, animate: false, startedAt: 0) }
+    func renderResting() {
+        render(label: "", animation: .idle, labelStartedAt: 0,
+               animationStartedAt: launchedAt.timeIntervalSince1970)
+    }
 
     // Per-session effective state with an age cap so a missed event cannot animate forever.
     func effectiveState(_ s: Session, now: Double) -> String {
@@ -902,7 +913,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             if turnWasAborted(transcriptPath: s.transcript, turnID: s.turnID) { return "idle" }
             return s.state
         }
-        return s.state == "done" ? "idle" : s.state
+        return StatusPolicy.effectiveState(rawState: s.state, age: max(0, now - s.ts))
     }
 
     func turnWasAborted(transcriptPath: String, turnID: String) -> Bool {
@@ -951,14 +962,17 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // MARK: render
 
-    func render(label: String, color: NSColor?, animate: Bool, startedAt: Double, dot: Bool = false) {
+    func render(label: String, animation: PetAnimation, labelStartedAt: Double,
+                animationStartedAt: Double, dotColor: NSColor? = nil) {
         guard let button = statusItem.button else { return }
         button.contentTintColor = nil // we paint the icon color ourselves; template-tint is unreliable
         activeBase = label
-        activeColor = color
-        self.startedAt = startedAt
+        activeAnimation = animation
+        self.animationStartedAt = animationStartedAt
+        activeDotColor = dotColor
+        startedAt = labelStartedAt
 
-        let shouldAnimate = animate && StatusPolicy.shouldAnimate(
+        let shouldAnimate = StatusPolicy.shouldAnimate(
             userEnabled: animateIcon,
             reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         )
@@ -968,18 +982,19 @@ final class StatusController: NSObject, NSMenuDelegate {
                 RunLoop.main.add(t, forMode: .common)
                 animTimer = t
             }
+            animStep()
         } else {
             animTimer?.invalidate(); animTimer = nil
-            frameIdx = 0
-            button.image = dot ? dotIcon(color: color) : (animate ? workingIcon(color: color) : restingIcon(color: color))
+            button.image = petIcon(animation: animation, column: 0, dotColor: dotColor)
         }
         applyTitle()
-        if button.image == nil { button.image = dot ? dotIcon(color: color) : restingIcon(color: color) }
+        if button.image == nil { button.image = fallbackIcon() }
     }
 
     func animStep() {
-        frameIdx = (frameIdx + 1) % frameCount
-        statusItem.button?.image = iconImage(color: activeColor, frame: frameIdx)
+        let elapsed = max(0, Int((Date().timeIntervalSince1970 - animationStartedAt) * 1000))
+        let column = activeAnimation.column(atMilliseconds: elapsed)
+        statusItem.button?.image = petIcon(animation: activeAnimation, column: column, dotColor: activeDotColor)
         applyTitle() // refresh the elapsed clock
     }
 
@@ -1020,16 +1035,10 @@ final class StatusController: NSObject, NSMenuDelegate {
             ?? NSImage(size: NSSize(width: 18, height: 18))
     }()
 
-    func iconImage(color: NSColor?, frame: Int) -> NSImage {
-        petFrame(row: 7, column: (frame / 3) % 6) ?? fallbackIcon()
-    }
-
-    func restingIcon(color: NSColor?) -> NSImage {
-        petFrame(row: 0, column: 0) ?? fallbackIcon()
-    }
-
-    func workingIcon(color: NSColor?) -> NSImage {
-        petFrame(row: 7, column: 0) ?? fallbackIcon()
+    func petIcon(animation: PetAnimation, column: Int, dotColor: NSColor?) -> NSImage {
+        let frame = petFrame(row: animation.spec.row, column: column) ?? fallbackIcon()
+        guard let dotColor else { return frame }
+        return dotIcon(base: frame, color: dotColor)
     }
 
     func loadSelectedPet() -> LoadedPet? {
@@ -1082,12 +1091,11 @@ final class StatusController: NSObject, NSMenuDelegate {
         }
     }
 
-    func dotIcon(color: NSColor?) -> NSImage {
+    func dotIcon(base: NSImage, color: NSColor) -> NSImage {
         let s: CGFloat = 20, d: CGFloat = 6
-        let waiting = petFrame(row: 6, column: 0) ?? fallbackIcon()
         let img = NSImage(size: NSSize(width: s, height: s), flipped: false) { rect in
-            waiting.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
-            (color ?? .systemYellow).setFill()
+            base.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            color.setFill()
             NSBezierPath(ovalIn: NSRect(x: s - d, y: 0, width: d, height: d)).fill()
             return true
         }
