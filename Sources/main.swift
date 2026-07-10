@@ -296,7 +296,6 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
     var sessions: [String: Session] = [:]  // id -> latest parsed per-session state
     var fileMTimes: [String: Date] = [:]   // "<id>.json" -> last-parsed mtime (re-parse only on change)
-    var gitHeadCache: [String: String] = [:]  // cwd -> resolved HEAD path ("" = confirmed non-git)
     var prevState: [String: String] = [:]  // id -> previous raw state per session
     var menuIsOpen = false                  // refresh the dropdown's per-session timers only while open
     var sessionMenuItems: [(item: NSMenuItem, id: String)] = []
@@ -338,7 +337,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         "Whirlpooling", "Whirring", "Whisking", "Wibbling", "Working", "Wrangling", "Zesting", "Zigzagging"]
     var iconColor: NSColor? { nil } // the Codex pet mark keeps its native full color
     let fps: Double = 20
-    let frameCount = 120
+    let frameCount = 18 // six working frames, held for three timer ticks each
 
     override init() {
         super.init()
@@ -467,13 +466,6 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        // Branches otherwise refresh only on hook events, so re-read on open (one tiny file read per
-        // session) to catch a checkout made while a session sat idle.
-        for (id, s) in sessions where !s.cwd.isEmpty {
-            if gitHeadCache[s.cwd] == "" { gitHeadCache[s.cwd] = nil }  // recheck non-git: may have been git-init'd since
-            var u = s; u.branch = branchForCwd(u.cwd); sessions[id] = u
-        }
-
         sessionMenuItems.removeAll()
         let now = Date().timeIntervalSince1970
         // Gate ONLY the desktop app: opening/clicking a conversation there seeds an idle session without
@@ -533,7 +525,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             self?.evaluate()   // re-render the bar label immediately with/without the rotating word
         })
 
-        menu.addItem(toggleRow(title: "Animate Codex icon", isOn: animateIcon) { [weak self] on in
+        menu.addItem(toggleRow(title: "Animate pet", isOn: animateIcon) { [weak self] on in
             self?.animateIcon = on
             UserDefaults.standard.set(on, forKey: "animateIcon")
             self?.animTimer?.invalidate(); self?.animTimer = nil
@@ -834,64 +826,9 @@ final class StatusController: NSObject, NSMenuDelegate {
             guard let data = fm.contents(atPath: full),
                   let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
             let id = (f as NSString).deletingPathExtension
-            var s = Session(json: o, id: id)
-            // A hook event means activity in that cwd, which may have JUST become a repo (git init /
-            // first branch mid-session) — a cached "" (non-git) would otherwise stick until app restart.
-            if gitHeadCache[s.cwd] == "" { gitHeadCache[s.cwd] = nil }
-            s.branch = branchForCwd(s.cwd)   // only on file change (a hook event), never on a bare tick
+            let s = Session(json: o, id: id)
             sessions[id] = s
         }
-    }
-
-    // MARK: git branch (no `git` spawn — .git/HEAD is a tiny text file)
-
-    // Resolve <cwd>'s HEAD path by walking toward /. A worktree/submodule has .git as a FILE
-    // containing "gitdir: <path>". Resolution walks directories, so cache it per cwd; a cached
-    // "" means confirmed non-git. Dropped by branchForCwd if the HEAD read later fails.
-    func gitHeadPath(_ cwd: String) -> String? {
-        if let hit = gitHeadCache[cwd] { return hit.isEmpty ? nil : hit }
-        let fm = FileManager.default
-        var dir = cwd, isDir: ObjCBool = false
-        for _ in 0..<40 {
-            let g = (dir as NSString).appendingPathComponent(".git")
-            if fm.fileExists(atPath: g, isDirectory: &isDir) {
-                var head: String? = nil
-                if isDir.boolValue {
-                    head = (g as NSString).appendingPathComponent("HEAD")
-                } else if let d = fm.contents(atPath: g), d.count <= 4096,
-                          let s = String(data: d, encoding: .utf8),
-                          let line = s.split(separator: "\n").first, line.hasPrefix("gitdir: ") {
-                    var gd = String(line.dropFirst(8)).trimmingCharacters(in: .whitespaces)
-                    if !gd.hasPrefix("/") { gd = ((dir as NSString).appendingPathComponent(gd) as NSString).standardizingPath }
-                    head = (gd as NSString).appendingPathComponent("HEAD")
-                }
-                gitHeadCache[cwd] = head ?? ""
-                return head
-            }
-            let parent = (dir as NSString).deletingLastPathComponent
-            if parent == dir || parent.isEmpty { break }
-            dir = parent
-        }
-        gitHeadCache[cwd] = ""
-        return nil
-    }
-
-    // HEAD is "ref: refs/heads/<branch>" on a branch, a bare commit hash when detached.
-    // nil (no branch text, no error) for non-git dirs and anything unrecognized.
-    func branchForCwd(_ cwd: String) -> String {
-        guard !cwd.isEmpty, let headPath = gitHeadPath(cwd) else { return "" }
-        guard let d = FileManager.default.contents(atPath: headPath), d.count <= 1024,
-              let s = String(data: d, encoding: .utf8) else {
-            gitHeadCache[cwd] = nil   // stale resolution (repo moved/deleted) — retry next time
-            return ""
-        }
-        let head = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        if head.hasPrefix("ref: refs/heads/") { return String(head.dropFirst(16)) }
-        if head.hasPrefix("ref: ") { return ((head as NSString).lastPathComponent) }
-        if (40...64).contains(head.count), head.allSatisfy({ $0.isHexDigit && !$0.isUppercase }) {
-            return String(head.prefix(7))   // detached HEAD -> short SHA
-        }
-        return ""
     }
 
     func evaluate() {
@@ -1034,7 +971,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         } else {
             animTimer?.invalidate(); animTimer = nil
             frameIdx = 0
-            button.image = dot ? dotIcon(color: color) : restingIcon(color: color)
+            button.image = dot ? dotIcon(color: color) : (animate ? workingIcon(color: color) : restingIcon(color: color))
         }
         applyTitle()
         if button.image == nil { button.image = dot ? dotIcon(color: color) : restingIcon(color: color) }
@@ -1069,7 +1006,14 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // MARK: icon
 
-    lazy var codexMark: NSImage = {
+    struct LoadedPet {
+        let image: NSImage
+        let layout: PetAtlasLayout
+    }
+
+    lazy var selectedPet: LoadedPet? = loadSelectedPet()
+
+    lazy var fallbackMark: NSImage = {
         if let path = Bundle.main.path(forResource: "CodexPet", ofType: "png"),
            let image = NSImage(contentsOfFile: path) { return image }
         return NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: "Codex")
@@ -1077,41 +1021,77 @@ final class StatusController: NSObject, NSMenuDelegate {
     }()
 
     func iconImage(color: NSColor?, frame: Int) -> NSImage {
-        let phase = CGFloat(frame % frameCount) / CGFloat(frameCount) * .pi * 2
-        let scale = 0.84 + 0.08 * ((sin(phase) + 1) / 2)
-        let rotation = 4.0 * sin(phase)
-        return codexIcon(color: color, scale: scale, rotationDegrees: rotation)
+        petFrame(row: 7, column: (frame / 3) % 6) ?? fallbackIcon()
     }
 
     func restingIcon(color: NSColor?) -> NSImage {
-        codexIcon(color: color, scale: 0.88, rotationDegrees: 0)
+        petFrame(row: 0, column: 0) ?? fallbackIcon()
     }
 
-    func codexIcon(color _: NSColor?, scale: CGFloat, rotationDegrees: CGFloat) -> NSImage {
-        let side: CGFloat = 18
-        let img = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
-            guard let context = NSGraphicsContext.current?.cgContext else { return false }
-            context.saveGState()
-            context.translateBy(x: side / 2, y: side / 2)
-            context.rotate(by: rotationDegrees * .pi / 180)
-            let drawSide = side * scale
-            self.codexMark.draw(in: NSRect(x: -drawSide / 2, y: -drawSide / 2, width: drawSide, height: drawSide),
-                                from: .zero, operation: .sourceOver, fraction: 1)
-            context.restoreGState()
+    func workingIcon(color: NSColor?) -> NSImage {
+        petFrame(row: 7, column: 0) ?? fallbackIcon()
+    }
+
+    func loadSelectedPet() -> LoadedPet? {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let configURL = home.appendingPathComponent(".codex/config.toml")
+        let petsURL = home.appendingPathComponent(".codex/pets", isDirectory: true)
+        let config = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        var petID = PetAssetLocator.selectedPetID(configText: config)
+        if petID == nil {
+            petID = (try? FileManager.default.contentsOfDirectory(atPath: petsURL.path))?
+                .sorted().first { FileManager.default.fileExists(atPath: petsURL.appendingPathComponent($0).appendingPathComponent("pet.json").path) }
+        }
+        guard let petID else { return nil }
+        let directory = petsURL.appendingPathComponent(petID, isDirectory: true)
+        let manifestURL = directory.appendingPathComponent("pet.json")
+        guard let data = try? Data(contentsOf: manifestURL),
+              let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let relativePath = manifest["spritesheetPath"] as? String,
+              let image = NSImage(contentsOf: directory.appendingPathComponent(relativePath)),
+              let representation = image.representations.max(by: { $0.pixelsWide < $1.pixelsWide }),
+              let layout = PetAtlasLayout(width: representation.pixelsWide, height: representation.pixelsHigh) else { return nil }
+        return LoadedPet(image: image, layout: layout)
+    }
+
+    func petFrame(row: Int, column: Int) -> NSImage? {
+        guard let pet = selectedPet, row >= 0, row < pet.layout.rows,
+              column >= 0, column < pet.layout.columns else { return nil }
+        let pixelRect = pet.layout.sourceRect(row: row, column: column)
+        let scaleX = pet.image.size.width / CGFloat(pet.layout.width)
+        let scaleY = pet.image.size.height / CGFloat(pet.layout.height)
+        let sourceRect = NSRect(x: pixelRect.origin.x * scaleX, y: pixelRect.origin.y * scaleY,
+                                width: pixelRect.width * scaleX, height: pixelRect.height * scaleY)
+        let side: CGFloat = 20
+        let drawHeight: CGFloat = 20
+        let drawWidth = drawHeight * CGFloat(pet.layout.cellWidth) / CGFloat(pet.layout.cellHeight)
+        let frame = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
+            pet.image.draw(in: NSRect(x: (side - drawWidth) / 2, y: 0, width: drawWidth, height: drawHeight),
+                           from: sourceRect, operation: .sourceOver, fraction: 1)
             return true
         }
-        img.isTemplate = false
-        return img
+        frame.isTemplate = false
+        return frame
+    }
+
+    func fallbackIcon() -> NSImage {
+        let side: CGFloat = 18
+        return NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            self.fallbackMark.draw(in: rect.insetBy(dx: 1, dy: 1), from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
     }
 
     func dotIcon(color: NSColor?) -> NSImage {
-        let s: CGFloat = 18, d: CGFloat = 9
-        let img = NSImage(size: NSSize(width: s, height: s), flipped: false) { _ in
+        let s: CGFloat = 20, d: CGFloat = 6
+        let waiting = petFrame(row: 6, column: 0) ?? fallbackIcon()
+        let img = NSImage(size: NSSize(width: s, height: s), flipped: false) { rect in
+            waiting.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
             (color ?? .systemYellow).setFill()
-            NSBezierPath(ovalIn: NSRect(x: (s - d) / 2, y: (s - d) / 2, width: d, height: d)).fill()
+            NSBezierPath(ovalIn: NSRect(x: s - d, y: 0, width: d, height: d)).fill()
             return true
         }
-        img.isTemplate = (color == nil)
+        img.isTemplate = false
         return img
     }
 

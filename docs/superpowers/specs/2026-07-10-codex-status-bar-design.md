@@ -14,7 +14,7 @@ Codex Status Bar shows:
 - A subtly pulsing and rotating Codex icon while Codex is thinking or using a tool.
 - An elapsed timer for the active turn when the timer setting is enabled.
 - A yellow waiting indicator when Codex requests permission.
-- A menu listing live sessions with project, Git branch, surface, state, and elapsed time.
+- A menu listing live sessions with project, surface, state, and elapsed time.
 - The highest-priority live session in the menu bar when multiple sessions exist.
 
 Priority order is permission request, active work, then idle. Ties use the most recent event.
@@ -112,7 +112,7 @@ Release checks are disabled until this fork has an explicit repository URL. The 
 
 ## Menu and Animation
 
-The existing AppKit menu, session rows, branch discovery, multi-session aggregation, and timer rendering remain where provider-neutral.
+The existing AppKit menu, session rows, multi-session aggregation, and timer rendering remain where provider-neutral. The app does not inspect project directories, avoiding macOS Documents-folder permission prompts.
 
 Claude-specific animation assets and names are removed. Working state uses the Codex mark with a restrained animation:
 

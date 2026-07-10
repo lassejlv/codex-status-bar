@@ -6,11 +6,11 @@ It uses Codex's documented lifecycle hooks to show when Codex is thinking, using
 
 ## What it shows
 
-- A resting Codex mark when idle.
-- A subtle pulse and rotation while working.
+- The selected local Codex pet from `~/.codex/pets` when idle.
+- The pet's native active-work frames while Codex runs and waiting pose when approval is needed.
 - A yellow indicator when Codex needs permission.
 - Optional elapsed time and thinking words.
-- Session rows with project, Git branch, surface, and state.
+- Session rows with project, surface, and state.
 
 The app is local-only. It does not read message content, collect telemetry, use an API key, or require Node, npm, Bun, or another runtime. To recover immediately when Esc interrupts a turn, it checks only the structured event envelopes at the tail of the active local session file for Codex's `turn_aborted` marker.
 

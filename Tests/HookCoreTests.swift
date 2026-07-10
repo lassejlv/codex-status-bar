@@ -72,8 +72,17 @@ struct HookCoreTests {
         """.utf8)
         expect(StatusPolicy.turnWasAborted(in: transcript, turnID: "turn-1"), "current turn abort is detected")
         expect(!StatusPolicy.turnWasAborted(in: transcript, turnID: "turn-2"), "old turn abort is ignored")
+        let config = """
+        model = "gpt-5"
+        selected-avatar-id = "custom:unckle-stuart"
+        """
+        expect(PetAssetLocator.selectedPetID(configText: config) == "unckle-stuart", "selected custom pet is parsed")
+        let atlas = PetAtlasLayout(width: 1536, height: 1872)
+        expect(atlas?.rows == 9, "v1 pet atlas is recognized")
+        expect(atlas?.sourceRect(row: 0, column: 0).origin.y == 1664, "idle row crops from atlas top")
+        expect(atlas?.sourceRect(row: 7, column: 5).origin.x == 960, "working frame column is located")
 
         if failures > 0 { exit(1) }
-        print("HookCoreTests: 26 passed")
+        print("HookCoreTests: 30 passed")
     }
 }

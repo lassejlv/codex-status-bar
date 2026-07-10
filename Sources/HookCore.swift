@@ -1,4 +1,52 @@
 import Foundation
+import CoreGraphics
+
+enum PetAssetLocator {
+    static func selectedPetID(configText: String) -> String? {
+        for rawLine in configText.split(separator: "\n") {
+            let line = rawLine.split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
+            let pair = line.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard pair.count == 2, pair[0] == "selected-avatar-id" else { continue }
+            let value = pair[1].trimmingCharacters(in: CharacterSet(charactersIn: "\"' "))
+            guard value.hasPrefix("custom:") else { return nil }
+            let id = String(value.dropFirst("custom:".count))
+            return id.isEmpty ? nil : id
+        }
+        return nil
+    }
+}
+
+struct PetAtlasLayout {
+    let width: Int
+    let height: Int
+    let columns = 8
+    let rows: Int
+    let cellWidth: Int
+    let cellHeight: Int
+
+    init?(width: Int, height: Int) {
+        guard width > 0, width % columns == 0 else { return nil }
+        let rows: Int
+        switch height {
+        case 1872: rows = 9
+        case 2288: rows = 11
+        default: return nil
+        }
+        self.width = width
+        self.height = height
+        self.rows = rows
+        self.cellWidth = width / columns
+        self.cellHeight = height / rows
+        guard cellWidth == 192, cellHeight == 208 else { return nil }
+    }
+
+    func sourceRect(row: Int, column: Int) -> CGRect {
+        CGRect(x: CGFloat(column * cellWidth),
+               y: CGFloat(height - (row + 1) * cellHeight),
+               width: CGFloat(cellWidth),
+               height: CGFloat(cellHeight))
+    }
+}
 
 enum StatusPolicy {
     static func priority(of state: String) -> Int {
