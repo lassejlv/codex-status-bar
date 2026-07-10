@@ -2,15 +2,16 @@
 
 A tiny native macOS menu-bar app that shows live Codex task state across Codex CLI and Codex Desktop.
 
-It uses Codex's documented lifecycle hooks to show when Codex is thinking, using a tool, waiting for permission, or idle. Multiple sessions are aggregated so a permission request is never hidden behind ordinary work.
+It uses Codex's documented lifecycle hooks to show when Codex is thinking, using a tool, herding subagents, waiting for permission, or idle. Multiple sessions are aggregated so a permission request is never hidden behind ordinary work.
 
 ## What it shows
 
 - The selected local Codex pet from `~/.codex/pets` when idle.
 - `Thinking…` while Codex reasons, plus concise tool labels such as `Running command`, `Editing`, and `Searching`.
+- `Herding an agent…` or `Herding N agents…` while Codex delegates work.
 - The pet's native idle, directional-running, hand-motion, review, waiting, and completion animations based on the current action.
 - A yellow indicator when Codex needs permission.
-- An optional elapsed timer.
+- An optional elapsed timer, three pet sizes, and a `Reload pet` action for refreshing the selected local pet without restarting.
 - Session rows with project, surface, and state.
 
 The app is local-only. It does not read message content, collect telemetry, use an API key, or require Node, npm, Bun, or another runtime. To recover immediately when Esc interrupts a turn, it checks only the structured event envelopes at the tail of the active local session file for Codex's `turn_aborted` marker.
@@ -32,15 +33,17 @@ For a DMG:
 
 On first launch, Codex Status Bar asks before changing anything. Choose **Install** to merge its commands into `~/.codex/hooks.json`. Existing hooks are preserved and the original file is backed up once.
 
-Then open `/hooks` in Codex, review the six Codex Status Bar commands, and trust them. Codex intentionally skips new hooks until you approve their exact definitions.
+Then open `/hooks` in Codex, review the eight Codex Status Bar commands, and trust them. Codex intentionally skips new hooks until you approve their exact definitions.
 
 ## Supported events
 
 - `SessionStart`
 - `UserPromptSubmit`
+- `SubagentStart`
 - `PreToolUse`
 - `PostToolUse`
 - `PermissionRequest`
+- `SubagentStop`
 - `Stop`
 
 CLI sessions are removed when their Codex process exits. Codex currently has no documented `SessionEnd` hook, so idle Desktop rows expire by age.

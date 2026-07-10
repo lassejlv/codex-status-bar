@@ -309,6 +309,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     let amber = NSColor(srgbRed: 0.95, green: 0.73, blue: 0.18, alpha: 1) // "awaiting permission" yellow dot
     var animateIcon = true
     var showTimer = false
+    var petDisplaySize = PetDisplaySize.normal
     let fps: Double = 20
 
     override init() {
@@ -316,6 +317,9 @@ final class StatusController: NSObject, NSMenuDelegate {
         let d = UserDefaults.standard
         if d.object(forKey: "showTimer") != nil { showTimer = d.bool(forKey: "showTimer") }
         if d.object(forKey: "animateIcon") != nil { animateIcon = d.bool(forKey: "animateIcon") }
+        if d.object(forKey: "petIconSize") != nil {
+            petDisplaySize = PetDisplaySize.from(persistedPoints: d.integer(forKey: "petIconSize"))
+        }
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -344,7 +348,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Install Codex status hooks?"
-        alert.informativeText = "Codex Status Bar will add six local command hooks to ~/.codex/hooks.json. Existing hooks are preserved. The hooks write only task status metadata under ~/.codex/statusbar and never read your conversation."
+        alert.informativeText = "Codex Status Bar will add eight local command hooks to ~/.codex/hooks.json, including subagent start and stop. Existing hooks are preserved. The hooks write only task status metadata under ~/.codex/statusbar and never read your conversation."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Install")
         alert.addButton(withTitle: "Not Now")
@@ -448,7 +452,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         let allOrdered = sessions.values.sorted { $0.ts > $1.ts }   // most-recent first
         let ordered = allOrdered.filter { s in
                 let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
-                let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")
+                let resting = !(eff == "permission" || StatusPolicy.isWorking(eff))
                 let gated = s.entrypoint == "codex-desktop"   // only the desktop app is gated
                 return !gated || s.started || !resting
             }
@@ -457,7 +461,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         // (and thus liveness) is untouched — see stalePruneAge and the pid-driven reap in evaluate().
         var visible = ordered.filter { s in
             let eff = s.eff.isEmpty ? effectiveState(s, now: now) : s.eff
-            let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")
+            let resting = !(eff == "permission" || StatusPolicy.isWorking(eff))
             return !(stalePruneAge > 0 && resting && now - s.ts > stalePruneAge)
         }
         if visible.isEmpty, let lead = ordered.first { visible = [lead] }   // floor: never empty while alive
@@ -497,6 +501,22 @@ final class StatusController: NSObject, NSMenuDelegate {
             self?.animTimer?.invalidate(); self?.animTimer = nil
             self?.evaluate()
         })
+
+        let petSizeItem = NSMenuItem(title: "Pet size", action: nil, keyEquivalent: "")
+        let petSizeMenu = NSMenu()
+        for size in PetDisplaySize.allCases {
+            let item = NSMenuItem(title: size.title, action: #selector(selectPetSize(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = size.rawValue
+            item.state = size == petDisplaySize ? .on : .off
+            petSizeMenu.addItem(item)
+        }
+        petSizeItem.submenu = petSizeMenu
+        menu.addItem(petSizeItem)
+
+        let reloadPetItem = NSMenuItem(title: "Reload pet", action: #selector(reloadPet), keyEquivalent: "")
+        reloadPetItem.target = self
+        menu.addItem(reloadPetItem)
 
         menu.addItem(.separator())
         let hooksItem = NSMenuItem(title: hooksAreInstalled ? "Reinstall Hooks…" : "Install Hooks…", action: #selector(installHooks), keyEquivalent: "")
@@ -571,7 +591,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         // plus a live timer while working since the spinner can't convey elapsed.
         var line = truncated(sessionName(s))
         if !s.branch.isEmpty { line += " · " + truncated(s.branch, max: 22, keep: 20) }
-        if eff == "thinking" || eff == "tool", s.startedAt > 0 {
+        if StatusPolicy.isWorking(eff), s.startedAt > 0 {
             line += "  " + elapsed(max(0, Int(now - s.startedAt)))
         }
         return line
@@ -592,12 +612,12 @@ final class StatusController: NSObject, NSMenuDelegate {
         // Generous cap: the row's pixel truncation does the real limiting now that the name field
         // sizes to the free space; this only guards against pathological strings.
         let nameMax = Int(cfg["nameMax"] ?? 30)
-        let working = (eff == "thinking" || eff == "tool") && s.startedAt > 0
-        let resting = !(eff == "permission" || eff == "thinking" || eff == "tool")  // the dim caret
+        let working = StatusPolicy.isWorking(eff) && s.startedAt > 0
+        let resting = !(eff == "permission" || StatusPolicy.isWorking(eff))  // the dim caret
         let tag = surfaceTag(s.entrypoint)
         v.configure(icon: sessionSymbol(s, eff: eff),
                     iconTint: resting ? .tertiaryLabelColor : .labelColor,  // caret dim; spinner matches the name font; amber image ignores tint
-                    spinning: (eff == "thinking" || eff == "tool"),
+                    spinning: StatusPolicy.isWorking(eff),
                     name: truncated(sessionName(s), max: nameMax, keep: nameMax),
                     branch: truncated(s.branch, max: 22, keep: 20),
                     timer: working ? elapsed(max(0, Int(now - s.startedAt))) : nil,
@@ -615,7 +635,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     func statusText(_ s: Session, eff: String) -> String {
         switch eff {
         case "permission":       return "Awaiting permission"
-        case "thinking", "tool": return StatusPolicy.displayLabel(state: s.state, storedLabel: s.label)
+        case "thinking", "tool", "subagent": return StatusPolicy.displayLabel(state: s.state, storedLabel: s.label)
         default:                 return s.state == "done" ? "Done" : "Idle"
         }
     }
@@ -665,7 +685,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     func sessionSymbol(_ s: Session, eff: String) -> NSImage? {
         switch eff {
         case "permission":       return symbolImage("exclamationmark.circle.fill", tint: amber)
-        case "thinking", "tool": return nil
+        case "thinking", "tool", "subagent": return nil
         default:                 return restingCaret   // done/idle merged: dim "ready for input" caret
         }
     }
@@ -702,7 +722,7 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // Rank a session's EFFECTIVE state for surfacing (higher = more important), so a session
     // awaiting YOUR permission is never hidden behind one merely thinking. `eff` only ever yields
-    // permission / thinking / tool / idle (done collapses to idle; waiting is never emitted).
+    // permission / thinking / tool / subagent / idle (done collapses to idle).
     func priority(of eff: String) -> Int {
         StatusPolicy.priority(of: eff)
     }
@@ -714,6 +734,18 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     @objc func quit() { NSApp.terminate(nil) }
+
+    @objc func selectPetSize(_ sender: NSMenuItem) {
+        guard let points = sender.representedObject as? Int else { return }
+        petDisplaySize = PetDisplaySize.from(persistedPoints: points)
+        UserDefaults.standard.set(petDisplaySize.points, forKey: "petIconSize")
+        evaluate()
+    }
+
+    @objc func reloadPet() {
+        selectedPet = loadSelectedPet()
+        evaluate()
+    }
 
     @objc func openCodex() {
         let ws = NSWorkspace.shared
@@ -832,7 +864,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         case "permission":
             render(label: statusText(lead, eff: lead.eff), animation: .waiting, labelStartedAt: 0,
                    animationStartedAt: lead.ts, dotColor: amber)
-        case "thinking", "tool":
+        case "thinking", "tool", "subagent":
             render(label: statusText(lead, eff: lead.eff), animation: lead.animation,
                    labelStartedAt: lead.startedAt, animationStartedAt: lead.ts)
         case "done":
@@ -850,7 +882,7 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // Per-session effective state with an age cap so a missed event cannot animate forever.
     func effectiveState(_ s: Session, now: Double) -> String {
-        if s.state == "thinking" || s.state == "tool" || s.state == "permission" {
+        if StatusPolicy.isWorking(s.state) || s.state == "permission" {
             let cap: Double = s.state == "permission" ? 7200 : 900
             if now - s.ts > cap { return "idle" }
             if turnWasAborted(transcriptPath: s.transcript, turnID: s.turnID) { return "idle" }
@@ -1014,8 +1046,8 @@ final class StatusController: NSObject, NSMenuDelegate {
         let scaleY = pet.image.size.height / CGFloat(pet.layout.height)
         let sourceRect = NSRect(x: pixelRect.origin.x * scaleX, y: pixelRect.origin.y * scaleY,
                                 width: pixelRect.width * scaleX, height: pixelRect.height * scaleY)
-        let side: CGFloat = 20
-        let drawHeight: CGFloat = 20
+        let side = CGFloat(petDisplaySize.points)
+        let drawHeight = side
         let drawWidth = drawHeight * CGFloat(pet.layout.cellWidth) / CGFloat(pet.layout.cellHeight)
         let frame = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
             pet.image.draw(in: NSRect(x: (side - drawWidth) / 2, y: 0, width: drawWidth, height: drawHeight),
@@ -1027,15 +1059,17 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
     func fallbackIcon() -> NSImage {
-        let side: CGFloat = 18
+        let side = CGFloat(petDisplaySize.points)
+        let inset = max(1, side * 0.05)
         return NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            self.fallbackMark.draw(in: rect.insetBy(dx: 1, dy: 1), from: .zero, operation: .sourceOver, fraction: 1)
+            self.fallbackMark.draw(in: rect.insetBy(dx: inset, dy: inset), from: .zero, operation: .sourceOver, fraction: 1)
             return true
         }
     }
 
     func dotIcon(base: NSImage, color: NSColor) -> NSImage {
-        let s: CGFloat = 20, d: CGFloat = 6
+        let s = CGFloat(petDisplaySize.points)
+        let d = max(4, (s * 0.3).rounded())
         let img = NSImage(size: NSSize(width: s, height: s), flipped: false) { rect in
             base.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
             color.setFill()

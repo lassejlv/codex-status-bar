@@ -48,6 +48,26 @@ struct PetAtlasLayout {
     }
 }
 
+enum PetDisplaySize: Int, CaseIterable {
+    case small = 16
+    case normal = 20
+    case large = 24
+
+    var points: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .small: return "Small"
+        case .normal: return "Normal"
+        case .large: return "Large"
+        }
+    }
+
+    static func from(persistedPoints: Int) -> PetDisplaySize {
+        PetDisplaySize(rawValue: persistedPoints) ?? .normal
+    }
+}
+
 enum PetAnimation: String {
     case idle
     case runRight
@@ -113,6 +133,7 @@ enum PetAnimation: String {
         case "done": return .jump
         case "failed": return .failed
         case "thinking": return .working
+        case "subagent": return .runRight
         case "tool":
             switch label {
             case "Running command": return .runRight
@@ -126,10 +147,14 @@ enum PetAnimation: String {
 }
 
 enum StatusPolicy {
+    static func isWorking(_ state: String) -> Bool {
+        state == "thinking" || state == "tool" || state == "subagent"
+    }
+
     static func priority(of state: String) -> Int {
         switch state {
         case "permission": return 2
-        case "thinking", "tool": return 1
+        case "thinking", "tool", "subagent": return 1
         default: return 0
         }
     }
@@ -202,24 +227,49 @@ enum HookEventMapper {
         return .working
     }
 
+    static func subagentLabel(count: Int) -> String {
+        count == 1 ? "Herding an agent…" : "Herding \(count) agents…"
+    }
+
     static func update(payload: [String: Any], event: String, previous: [String: Any]?, pid: Int32, now: Double) -> [String: Any]? {
         let previous = previous ?? [:]
         let sessionID = payload["session_id"] as? String ?? previous["sessionId"] as? String ?? "unknown"
         let cwd = payload["cwd"] as? String ?? previous["cwd"] as? String ?? ""
         let project = cwd.isEmpty ? (previous["project"] as? String ?? "") : URL(fileURLWithPath: cwd).lastPathComponent
         let tool = payload["tool_name"] as? String ?? ""
+        let agentID = payload["agent_id"] as? String ?? ""
         var state: String
         var label: String
         var animation: PetAnimation
         var commandRow = previous["commandRow"] as? Int ?? 2
+        var agentRow = previous["agentRow"] as? Int ?? 2
+        var activeAgents = previous["activeAgents"] as? [String] ?? []
         var startedAt = previous["startedAt"] as? Double ?? 0
         var started = previous["started"] as? Bool ?? false
 
         switch event {
         case "SessionStart":
+            activeAgents = []
             state = "idle"; label = ""; animation = .idle; startedAt = 0
         case "UserPromptSubmit":
+            activeAgents = []
             state = "thinking"; label = "Thinking…"; animation = .working; startedAt = now; started = true
+        case "SubagentStart":
+            if !agentID.isEmpty, !activeAgents.contains(agentID) { activeAgents.append(agentID) }
+            activeAgents.sort()
+            agentRow = agentRow == 1 ? 2 : 1
+            state = "subagent"; label = subagentLabel(count: max(1, activeAgents.count))
+            animation = agentRow == 1 ? .runRight : .runLeft
+            startedAt = startedAt == 0 ? now : startedAt; started = true
+        case "SubagentStop":
+            if !agentID.isEmpty { activeAgents.removeAll { $0 == agentID } }
+            if activeAgents.isEmpty {
+                state = "thinking"; label = "Thinking…"; animation = .working
+            } else {
+                state = "subagent"; label = subagentLabel(count: activeAgents.count)
+                animation = agentRow == 1 ? .runRight : .runLeft
+            }
+            startedAt = startedAt == 0 ? now : startedAt; started = true
         case "PreToolUse":
             state = "tool"; label = toolLabel(tool); animation = toolAnimation(tool)
             if animation == .runRight {
@@ -228,10 +278,17 @@ enum HookEventMapper {
             }
             startedAt = startedAt == 0 ? now : startedAt; started = true
         case "PostToolUse":
-            state = "thinking"; label = "Thinking…"; animation = .working; startedAt = startedAt == 0 ? now : startedAt; started = true
+            if activeAgents.isEmpty {
+                state = "thinking"; label = "Thinking…"; animation = .working
+            } else {
+                state = "subagent"; label = subagentLabel(count: activeAgents.count)
+                animation = agentRow == 1 ? .runRight : .runLeft
+            }
+            startedAt = startedAt == 0 ? now : startedAt; started = true
         case "PermissionRequest":
             state = "permission"; label = "Awaiting permission"; animation = .waiting; startedAt = 0; started = true
         case "Stop":
+            activeAgents = []
             state = "done"; label = "Done"; animation = .jump; startedAt = 0; started = true
         default:
             return nil
@@ -242,6 +299,8 @@ enum HookEventMapper {
             "label": label,
             "animation": animation.rawValue,
             "commandRow": commandRow,
+            "agentRow": agentRow,
+            "activeAgents": activeAgents,
             "tool": tool,
             "project": project,
             "cwd": cwd,
@@ -261,7 +320,7 @@ enum HookEventMapper {
 
 enum HookConfiguration {
     static let marker = "codex-status-bar-hook"
-    static let events = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop"]
+    static let events = ["SessionStart", "UserPromptSubmit", "SubagentStart", "PreToolUse", "PostToolUse", "PermissionRequest", "SubagentStop", "Stop"]
 
     static func command(helperPath: String, event: String) -> String {
         let quoted = "'" + helperPath.replacingOccurrences(of: "'", with: "'\\''") + "'"

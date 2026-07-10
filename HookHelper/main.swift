@@ -10,6 +10,11 @@ guard let payload = try? JSONSerialization.jsonObject(with: input) as? [String: 
 let event = CommandLine.arguments.dropFirst().first ?? payload["hook_event_name"] as? String ?? ""
 let sessionID = payload["session_id"] as? String ?? "unknown"
 let stateURL = stateDirectory.appendingPathComponent(HookEventMapper.safeID(sessionID) + ".json")
+try? FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)
+let lockURL = stateDirectory.appendingPathComponent(".\(HookEventMapper.safeID(sessionID)).lock")
+let lockDescriptor = Darwin.open(lockURL.path, O_CREAT | O_RDWR, mode_t(0o600))
+if lockDescriptor >= 0 { _ = flock(lockDescriptor, LOCK_EX) }
+
 let previous: [String: Any]? = FileManager.default.contents(atPath: stateURL.path)
     .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
 
@@ -46,9 +51,16 @@ do {
     } catch { }
 }
 
+if lockDescriptor >= 0 {
+    _ = flock(lockDescriptor, LOCK_UN)
+    _ = Darwin.close(lockDescriptor)
+}
+
 if event == "SessionStart", environment["CODEX_STATUSBAR_NO_LAUNCH"] != "1" {
     let task = Process()
     task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
     task.arguments = ["-g", "-b", "com.local.codexstatusbar"]
     try? task.run()
 }
+
+if event == "SubagentStop" || event == "Stop" { print("{}") }

@@ -55,6 +55,10 @@ struct HookCoreTests {
         expect(PetAnimation.working.column(atMilliseconds: 120) == 1, "working advances on the standard boundary")
         expect(PetAnimation.working.column(atMilliseconds: 820) == 0, "repeating work wraps after one loop")
         expect(PetAnimation.jump.column(atMilliseconds: 2_000) == 4, "one-shot jump clamps to its final frame")
+        expect(PetDisplaySize.small.points == 16, "small pet size is compact")
+        expect(PetDisplaySize.normal.points == 20, "normal pet size preserves the current default")
+        expect(PetDisplaySize.large.points == 24, "large pet size is visibly larger")
+        expect(PetDisplaySize.from(persistedPoints: 99) == .normal, "invalid persisted size falls back safely")
         expect(PetAnimation.fallback(state: "thinking", label: "Thinking…") == .working, "old thinking state uses active work")
         expect(PetAnimation.fallback(state: "tool", label: "Searching") == .review, "old search state uses review")
         expect(PetAnimation.fallback(state: "tool", label: "Editing") == .wave, "old editing state uses hand motion")
@@ -82,6 +86,36 @@ struct HookCoreTests {
         expect(secondCommand?["animation"] as? String == PetAnimation.runLeft.rawValue, "second command runs left")
         expect(secondCommand?["commandRow"] as? Int == 2, "command direction is persisted")
 
+        var firstAgentPayload = base
+        firstAgentPayload["agent_id"] = "agent-one"
+        firstAgentPayload["agent_type"] = "explorer"
+        let firstAgent = HookEventMapper.update(payload: firstAgentPayload, event: "SubagentStart", previous: prompt, pid: 42, now: now + 8)
+        expect(firstAgent?["state"] as? String == "subagent", "subagent start enters agent state")
+        expect(firstAgent?["label"] as? String == "Herding an agent…", "one agent gets funny singular copy")
+        expect(firstAgent?["animation"] as? String == PetAnimation.runRight.rawValue, "first agent runs right")
+        expect(firstAgent?["activeAgents"] as? [String] == ["agent-one"], "first active agent is persisted")
+
+        var secondAgentPayload = base
+        secondAgentPayload["agent_id"] = "agent-two"
+        secondAgentPayload["agent_type"] = "reviewer"
+        let secondAgent = HookEventMapper.update(payload: secondAgentPayload, event: "SubagentStart", previous: firstAgent, pid: 42, now: now + 9)
+        expect(secondAgent?["label"] as? String == "Herding 2 agents…", "multiple agents show their count")
+        expect(secondAgent?["animation"] as? String == PetAnimation.runLeft.rawValue, "next agent runs left")
+
+        let oneAgentStopped = HookEventMapper.update(payload: firstAgentPayload, event: "SubagentStop", previous: secondAgent, pid: 42, now: now + 10)
+        expect(oneAgentStopped?["state"] as? String == "subagent", "remaining agent keeps agent state")
+        expect(oneAgentStopped?["label"] as? String == "Herding an agent…", "remaining agent restores singular copy")
+        expect(oneAgentStopped?["activeAgents"] as? [String] == ["agent-two"], "stopped agent is removed")
+        let allAgentsStopped = HookEventMapper.update(payload: secondAgentPayload, event: "SubagentStop", previous: oneAgentStopped, pid: 42, now: now + 11)
+        expect(allAgentsStopped?["state"] as? String == "thinking", "last agent stop resumes parent thinking")
+        expect(allAgentsStopped?["label"] as? String == "Thinking…", "last agent stop restores normal copy")
+        expect(allAgentsStopped?["activeAgents"] as? [String] == [], "last active agent is removed")
+        expect(StatusPolicy.priority(of: "subagent") > StatusPolicy.priority(of: "idle"), "agent work outranks idle")
+        expect(StatusPolicy.isWorking("subagent"), "subagent state renders as active work")
+        expect(!StatusPolicy.isWorking("idle"), "idle state does not render as active work")
+        expect(HookConfiguration.events.contains("SubagentStart"), "subagent start hook is installed")
+        expect(HookConfiguration.events.contains("SubagentStop"), "subagent stop hook is installed")
+
         let existing = Data("""
         {"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"keep-me"}]}]}}
         """.utf8)
@@ -93,6 +127,8 @@ struct HookCoreTests {
         let commands = pre.flatMap { ($0["hooks"] as? [[String: Any]] ?? []).compactMap { $0["command"] as? String } }
         expect(commands.contains("keep-me"), "install preserves unrelated hooks")
         expect(commands.filter { $0.contains(HookConfiguration.marker) }.count == 1, "reinstall is idempotent")
+        expect((hooks["SubagentStart"] as? [[String: Any]])?.count == 1, "subagent start hook installs once")
+        expect((hooks["SubagentStop"] as? [[String: Any]])?.count == 1, "subagent stop hook installs once")
         let removed = try HookConfiguration.uninstall(existing: installedAgain)
         let removedText = String(decoding: removed, as: UTF8.self)
         expect(removedText.contains("keep-me"), "uninstall preserves unrelated hook")
