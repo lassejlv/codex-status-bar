@@ -48,6 +48,65 @@ struct PetAtlasLayout {
     }
 }
 
+enum PetAnimation: String {
+    case idle
+    case runRight
+    case runLeft
+    case wave
+    case jump
+    case failed
+    case waiting
+    case working
+    case review
+
+    struct Spec {
+        let row: Int
+        let frameDurationsMilliseconds: [Int]
+        let repeats: Bool
+    }
+
+    var spec: Spec {
+        switch self {
+        case .idle:
+            return Spec(row: 0, frameDurationsMilliseconds: [280, 110, 110, 140, 140, 320], repeats: true)
+        case .runRight:
+            return Spec(row: 1, frameDurationsMilliseconds: [120, 120, 120, 120, 120, 120, 120, 220], repeats: true)
+        case .runLeft:
+            return Spec(row: 2, frameDurationsMilliseconds: [120, 120, 120, 120, 120, 120, 120, 220], repeats: true)
+        case .wave:
+            return Spec(row: 3, frameDurationsMilliseconds: [140, 140, 140, 280], repeats: true)
+        case .jump:
+            return Spec(row: 4, frameDurationsMilliseconds: [140, 140, 140, 140, 280], repeats: false)
+        case .failed:
+            return Spec(row: 5, frameDurationsMilliseconds: [140, 140, 140, 140, 140, 140, 140, 240], repeats: false)
+        case .waiting:
+            return Spec(row: 6, frameDurationsMilliseconds: [150, 150, 150, 150, 150, 260], repeats: true)
+        case .working:
+            return Spec(row: 7, frameDurationsMilliseconds: [120, 120, 120, 120, 120, 220], repeats: true)
+        case .review:
+            return Spec(row: 8, frameDurationsMilliseconds: [150, 150, 150, 150, 150, 280], repeats: true)
+        }
+    }
+
+    var totalDurationMilliseconds: Int {
+        spec.frameDurationsMilliseconds.reduce(0, +)
+    }
+
+    func column(atMilliseconds elapsedMilliseconds: Int) -> Int {
+        let durations = spec.frameDurationsMilliseconds
+        guard !durations.isEmpty else { return 0 }
+        let total = totalDurationMilliseconds
+        let elapsed = max(0, elapsedMilliseconds)
+        let position = spec.repeats ? elapsed % total : min(elapsed, total - 1)
+        var boundary = 0
+        for (column, duration) in durations.enumerated() {
+            boundary += duration
+            if position < boundary { return column }
+        }
+        return durations.count - 1
+    }
+}
+
 enum StatusPolicy {
     static func priority(of state: String) -> Int {
         switch state {
@@ -104,6 +163,16 @@ enum HookEventMapper {
         return "Using tool"
     }
 
+    static func toolAnimation(_ name: String) -> PetAnimation {
+        let lower = name.lowercased()
+        if lower == "bash" || lower.contains("exec") || lower.contains("command") { return .runRight }
+        if lower == "apply_patch" || lower.contains("edit") || lower.contains("write") { return .wave }
+        if lower.contains("read") || lower.contains("fetch") || lower.contains("open") { return .review }
+        if lower.contains("search") || lower.contains("find") || lower.contains("grep") || lower.contains("glob") { return .review }
+        if lower.contains("browser") || lower.contains("web") { return .review }
+        return .working
+    }
+
     static func update(payload: [String: Any], event: String, previous: [String: Any]?, pid: Int32, now: Double) -> [String: Any]? {
         let previous = previous ?? [:]
         let sessionID = payload["session_id"] as? String ?? previous["sessionId"] as? String ?? "unknown"
@@ -112,22 +181,29 @@ enum HookEventMapper {
         let tool = payload["tool_name"] as? String ?? ""
         var state: String
         var label: String
+        var animation: PetAnimation
+        var commandRow = previous["commandRow"] as? Int ?? 2
         var startedAt = previous["startedAt"] as? Double ?? 0
         var started = previous["started"] as? Bool ?? false
 
         switch event {
         case "SessionStart":
-            state = "idle"; label = ""; startedAt = 0
+            state = "idle"; label = ""; animation = .idle; startedAt = 0
         case "UserPromptSubmit":
-            state = "thinking"; label = "Thinking…"; startedAt = now; started = true
+            state = "thinking"; label = "Thinking…"; animation = .working; startedAt = now; started = true
         case "PreToolUse":
-            state = "tool"; label = toolLabel(tool); startedAt = startedAt == 0 ? now : startedAt; started = true
+            state = "tool"; label = toolLabel(tool); animation = toolAnimation(tool)
+            if animation == .runRight {
+                commandRow = commandRow == 1 ? 2 : 1
+                animation = commandRow == 1 ? .runRight : .runLeft
+            }
+            startedAt = startedAt == 0 ? now : startedAt; started = true
         case "PostToolUse":
-            state = "thinking"; label = "Thinking…"; startedAt = startedAt == 0 ? now : startedAt; started = true
+            state = "thinking"; label = "Thinking…"; animation = .working; startedAt = startedAt == 0 ? now : startedAt; started = true
         case "PermissionRequest":
-            state = "permission"; label = "Awaiting permission"; startedAt = 0; started = true
+            state = "permission"; label = "Awaiting permission"; animation = .waiting; startedAt = 0; started = true
         case "Stop":
-            state = "done"; label = "Done"; startedAt = 0; started = true
+            state = "done"; label = "Done"; animation = .jump; startedAt = 0; started = true
         default:
             return nil
         }
@@ -135,6 +211,8 @@ enum HookEventMapper {
         return [
             "state": state,
             "label": label,
+            "animation": animation.rawValue,
+            "commandRow": commandRow,
             "tool": tool,
             "project": project,
             "cwd": cwd,

@@ -3,8 +3,10 @@ import Foundation
 @main
 struct HookCoreTests {
     static var failures = 0
+    static var assertions = 0
 
     static func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+        assertions += 1
         if !condition() { failures += 1; fputs("FAIL: \(message)\n", stderr) }
     }
 
@@ -19,6 +21,7 @@ struct HookCoreTests {
         let now = 1_750_000_000.0
         let prompt = HookEventMapper.update(payload: base, event: "UserPromptSubmit", previous: nil, pid: 42, now: now)
         expect(prompt?["state"] as? String == "thinking", "prompt starts thinking")
+        expect(prompt?["animation"] as? String == PetAnimation.working.rawValue, "prompt uses active-work animation")
         expect(prompt?["startedAt"] as? Double == now, "prompt starts timer")
         expect(prompt?["sessionId"] as? String == "thread/../../unsafe", "raw session id remains metadata")
         expect(prompt?["transcript"] as? String == "/tmp/session.jsonl", "session event path is retained")
@@ -29,16 +32,45 @@ struct HookCoreTests {
         let tool = HookEventMapper.update(payload: toolPayload, event: "PreToolUse", previous: prompt, pid: 42, now: now + 1)
         expect(tool?["state"] as? String == "tool", "pre-tool starts tool state")
         expect(tool?["label"] as? String == "Editing", "apply_patch gets editing label")
+        expect(tool?["animation"] as? String == PetAnimation.wave.rawValue, "editing uses hand-motion animation")
         expect(tool?["startedAt"] as? Double == now, "tool preserves turn timer")
 
         let post = HookEventMapper.update(payload: base, event: "PostToolUse", previous: tool, pid: 42, now: now + 2)
         expect(post?["state"] as? String == "thinking", "post-tool resumes thinking")
+        expect(post?["animation"] as? String == PetAnimation.working.rawValue, "post-tool resumes active-work animation")
         let permission = HookEventMapper.update(payload: toolPayload, event: "PermissionRequest", previous: post, pid: 42, now: now + 3)
         expect(permission?["state"] as? String == "permission", "permission request waits")
+        expect(permission?["animation"] as? String == PetAnimation.waiting.rawValue, "permission uses waiting animation")
         expect(permission?["startedAt"] as? Double == 0, "permission clears timer")
         let stop = HookEventMapper.update(payload: base, event: "Stop", previous: permission, pid: 42, now: now + 4)
         expect(stop?["state"] as? String == "done", "stop completes turn")
+        expect(stop?["animation"] as? String == PetAnimation.jump.rawValue, "completed turn uses jump animation")
         expect(HookEventMapper.update(payload: base, event: "Unknown", previous: nil, pid: 1, now: now) == nil, "unknown event is ignored")
+
+        expect(PetAnimation.idle.spec.row == 0, "idle uses row zero")
+        expect(PetAnimation.runRight.spec.frameDurationsMilliseconds.count == 8, "directional run uses eight frames")
+        expect(PetAnimation.jump.totalDurationMilliseconds == 840, "jump lasts one standard loop")
+        expect(PetAnimation.working.column(atMilliseconds: 0) == 0, "working starts at first frame")
+        expect(PetAnimation.working.column(atMilliseconds: 119) == 0, "working holds its first frame")
+        expect(PetAnimation.working.column(atMilliseconds: 120) == 1, "working advances on the standard boundary")
+        expect(PetAnimation.working.column(atMilliseconds: 820) == 0, "repeating work wraps after one loop")
+        expect(PetAnimation.jump.column(atMilliseconds: 2_000) == 4, "one-shot jump clamps to its final frame")
+        expect(HookEventMapper.toolAnimation("apply_patch") == .wave, "editing maps to hand motion")
+        expect(HookEventMapper.toolAnimation("read_file") == .review, "reading maps to review")
+        expect(HookEventMapper.toolAnimation("search_query") == .review, "search maps to review")
+        expect(HookEventMapper.toolAnimation("web__run") == .review, "web work maps to review")
+        expect(HookEventMapper.toolAnimation("custom_tool") == .working, "unknown tools map to active work")
+
+        var commandPayload = base
+        commandPayload["tool_name"] = "exec_command"
+        let firstCommand = HookEventMapper.update(payload: commandPayload, event: "PreToolUse", previous: post, pid: 42, now: now + 5)
+        expect(firstCommand?["label"] as? String == "Running command", "command keeps its action label")
+        expect(firstCommand?["animation"] as? String == PetAnimation.runRight.rawValue, "first command runs right")
+        let afterCommand = HookEventMapper.update(payload: base, event: "PostToolUse", previous: firstCommand, pid: 42, now: now + 6)
+        expect(afterCommand?["commandRow"] as? Int == 1, "post-tool preserves command direction")
+        let secondCommand = HookEventMapper.update(payload: commandPayload, event: "PreToolUse", previous: afterCommand, pid: 42, now: now + 7)
+        expect(secondCommand?["animation"] as? String == PetAnimation.runLeft.rawValue, "second command runs left")
+        expect(secondCommand?["commandRow"] as? Int == 2, "command direction is persisted")
 
         let existing = Data("""
         {"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"keep-me"}]}]}}
@@ -83,6 +115,6 @@ struct HookCoreTests {
         expect(atlas?.sourceRect(row: 7, column: 5).origin.x == 960, "working frame column is located")
 
         if failures > 0 { exit(1) }
-        print("HookCoreTests: 30 passed")
+        print("HookCoreTests: \(assertions) passed")
     }
 }
