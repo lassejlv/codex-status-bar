@@ -298,7 +298,6 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
     var sessions: [String: Session] = [:]  // id -> latest parsed per-session state
     var fileMTimes: [String: Date] = [:]   // "<id>.json" -> last-parsed mtime (re-parse only on change)
-    var prevState: [String: String] = [:]  // id -> previous raw state per session
     var menuIsOpen = false                  // refresh the dropdown's per-session timers only while open
     var sessionMenuItems: [(item: NSMenuItem, id: String)] = []
     var activeBase = ""        // label without the elapsed clock
@@ -310,42 +309,12 @@ final class StatusController: NSObject, NSMenuDelegate {
     let amber = NSColor(srgbRed: 0.95, green: 0.73, blue: 0.18, alpha: 1) // "awaiting permission" yellow dot
     var animateIcon = true
     var showTimer = false
-    var useThinkingWords = true     // rotate a playful verb ("Manifesting…") in place of "Thinking…"
-    var sessionWord: [String: String] = [:] // id -> current thinking word; re-picked on each entry into "thinking"
-    // Short working words keep the menu bar lively without widening it too aggressively.
-    // ("Hullaballooing"/"Metamorphosing"); with the timer showing they can get wide in a crowded menu bar.
-    let thinkingWords = [
-        "Accomplishing", "Actioning", "Actualizing", "Architecting", "Baking", "Beaming", "Beboppin'",
-        "Befuddling", "Billowing", "Blanching", "Bloviating", "Boogieing", "Boondoggling", "Booping",
-        "Bootstrapping", "Brewing", "Bunning", "Burrowing", "Calculating", "Canoodling", "Caramelizing",
-        "Cascading", "Catapulting", "Cerebrating", "Channeling", "Channelling", "Churning", "Coding",
-        "Coalescing", "Cogitating", "Combobulating", "Composing", "Computing", "Concocting", "Considering",
-        "Contemplating", "Cooking", "Crafting", "Creating", "Crunching", "Crystallizing", "Cultivating",
-        "Deciphering", "Deliberating", "Determining", "Doing", "Doodling", "Drizzling", "Ebbing",
-        "Effecting", "Elucidating", "Embellishing", "Enchanting", "Envisioning", "Evaporating", "Fermenting",
-        "Finagling", "Flambéing", "Flowing", "Flummoxing", "Fluttering", "Forging", "Forming", "Frolicking",
-        "Gallivanting", "Galloping", "Garnishing", "Generating", "Gesticulating", "Germinating", "Gitifying",
-        "Grooving", "Gusting", "Harmonizing", "Hashing", "Hatching", "Herding", "Honking", "Hullaballooing",
-        "Hyperspacing", "Ideating", "Imagining", "Improvising", "Incubating", "Inferring", "Infusing",
-        "Ionizing", "Jitterbugging", "Julienning", "Kneading", "Leavening", "Levitating", "Lollygagging",
-        "Manifesting", "Marinating", "Meandering", "Metamorphosing", "Misting", "Moonwalking", "Moseying",
-        "Mulling", "Mustering", "Musing", "Nebulizing", "Nesting", "Noodling", "Nucleating", "Orbiting",
-        "Orchestrating", "Osmosing", "Perambulating", "Percolating", "Perusing", "Pollinating", "Pondering",
-        "Pontificating", "Pouncing", "Precipitating", "Processing", "Proofing", "Propagating", "Puttering",
-        "Puzzling", "Quantumizing", "Razzmatazzing", "Reticulating", "Roosting", "Ruminating", "Sautéing",
-        "Scampering", "Schlepping", "Scurrying", "Seasoning", "Shenaniganing", "Shimmying", "Simmering",
-        "Skedaddling", "Sketching", "Slithering", "Smooshing", "Spelunking", "Spinning", "Sprouting",
-        "Stewing", "Sublimating", "Swirling", "Swooping", "Symbioting", "Synthesizing", "Tempering",
-        "Thinking", "Thundering", "Tinkering", "Tomfoolering", "Transfiguring", "Transmuting", "Twisting",
-        "Undulating", "Unfurling", "Unravelling", "Vibing", "Waddling", "Wandering", "Warping",
-        "Whirlpooling", "Whirring", "Whisking", "Wibbling", "Working", "Wrangling", "Zesting", "Zigzagging"]
     let fps: Double = 20
 
     override init() {
         super.init()
         let d = UserDefaults.standard
         if d.object(forKey: "showTimer") != nil { showTimer = d.bool(forKey: "showTimer") }
-        if d.object(forKey: "thinkingWords") != nil { useThinkingWords = d.bool(forKey: "thinkingWords") }
         if d.object(forKey: "animateIcon") != nil { animateIcon = d.bool(forKey: "animateIcon") }
         let menu = NSMenu()
         menu.delegate = self
@@ -522,12 +491,6 @@ final class StatusController: NSObject, NSMenuDelegate {
             UserDefaults.standard.set(on, forKey: "showTimer")
             self?.applyTitle()
         })
-        menu.addItem(toggleRow(title: "Thinking words", isOn: useThinkingWords) { [weak self] on in
-            self?.useThinkingWords = on
-            UserDefaults.standard.set(on, forKey: "thinkingWords")
-            self?.evaluate()   // re-render the bar label immediately with/without the rotating word
-        })
-
         menu.addItem(toggleRow(title: "Animate pet", isOn: animateIcon) { [weak self] on in
             self?.animateIcon = on
             UserDefaults.standard.set(on, forKey: "animateIcon")
@@ -652,7 +615,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     func statusText(_ s: Session, eff: String) -> String {
         switch eff {
         case "permission":       return "Awaiting permission"
-        case "thinking", "tool": return workingLabel(s)
+        case "thinking", "tool": return StatusPolicy.displayLabel(state: s.state, storedLabel: s.label)
         default:                 return s.state == "done" ? "Done" : "Idle"
         }
     }
@@ -744,23 +707,6 @@ final class StatusController: NSObject, NSMenuDelegate {
         StatusPolicy.priority(of: eff)
     }
 
-    func workingLabel(_ s: Session) -> String {
-        if useThinkingWords, s.state == "thinking", let w = sessionWord[s.id], !w.isEmpty { return w + "…" }
-        if !s.label.isEmpty { return s.label }
-        return s.state == "tool" ? "Working…" : "Thinking…"
-    }
-
-    // Re-pick a word each time a session ENTERS the thinking state (prompt, or a tool->thinking `post`),
-    // avoiding an immediate repeat, so a tool round-trip lands a different word. Held steady while the
-    // session stays thinking. Computed regardless of the toggle so flipping it on shows instantly.
-    func updateThinkingWord(_ s: Session) {
-        let prev = prevState[s.id] ?? ""
-        guard s.state == "thinking", prev != "thinking" else { return }
-        var w = thinkingWords.randomElement() ?? "Thinking"
-        if thinkingWords.count > 1 { while w == sessionWord[s.id] { w = thinkingWords.randomElement() ?? w } }
-        sessionWord[s.id] = w
-    }
-
     // Compact elapsed time: "1m 1s" / "43s".
     func elapsed(_ secs: Int) -> String {
         let m = secs / 60, s = secs % 60
@@ -848,14 +794,11 @@ final class StatusController: NSObject, NSMenuDelegate {
                 : (s.eff == "idle" && stalePruneAge > 0 && now - s.ts > stalePruneAge))
             if dead {
                 try? FileManager.default.removeItem(atPath: (stateDir as NSString).appendingPathComponent(id + ".json"))
-                sessions[id] = nil; fileMTimes[id + ".json"] = nil; prevState[id] = nil; sessionWord[id] = nil
+                sessions[id] = nil; fileMTimes[id + ".json"] = nil
                 continue
             }
             sessions[id] = s
-            updateThinkingWord(s)
-            prevState[s.id] = s.state
         }
-        for id in Array(prevState.keys) where sessions[id] == nil { prevState[id] = nil; sessionWord[id] = nil }
 
         // Same-named projects (two clones/worktrees of one repo) get a parent-folder qualifier
         // ("work/myrepo" vs "tmp/myrepo") so their rows stay tellable apart. Runs after the reap so

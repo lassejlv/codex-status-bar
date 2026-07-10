@@ -144,6 +144,11 @@ enum StatusPolicy {
         return age < jumpDuration ? "done" : "idle"
     }
 
+    static func displayLabel(state: String, storedLabel: String) -> String {
+        if !storedLabel.isEmpty { return storedLabel }
+        return state == "tool" ? "Working…" : "Thinking…"
+    }
+
     static func versionIsNewer(_ candidate: String, than current: String) -> Bool {
         let a = candidate.split(separator: ".").map { Int($0) ?? 0 }
         let b = current.split(separator: ".").map { Int($0) ?? 0 }
