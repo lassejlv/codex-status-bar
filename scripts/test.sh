@@ -5,3 +5,4 @@ mkdir -p build/tests
 swiftc Sources/HookCore.swift Tests/HookCoreTests.swift -o build/tests/HookCoreTests
 build/tests/HookCoreTests
 scripts/test-hook-helper.sh
+swift Tests/IconResourceTests.swift

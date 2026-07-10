@@ -14,12 +14,14 @@ struct HookCoreTests {
             "cwd": "/tmp/project",
             "model": "gpt-5",
             "turn_id": "turn-1",
+            "transcript_path": "/tmp/session.jsonl",
         ]
         let now = 1_750_000_000.0
         let prompt = HookEventMapper.update(payload: base, event: "UserPromptSubmit", previous: nil, pid: 42, now: now)
         expect(prompt?["state"] as? String == "thinking", "prompt starts thinking")
         expect(prompt?["startedAt"] as? Double == now, "prompt starts timer")
         expect(prompt?["sessionId"] as? String == "thread/../../unsafe", "raw session id remains metadata")
+        expect(prompt?["transcript"] as? String == "/tmp/session.jsonl", "session event path is retained")
         expect(HookEventMapper.safeID("thread/../../unsafe") == "thread....unsafe", "unsafe filename characters are removed")
 
         var toolPayload = base
@@ -64,8 +66,14 @@ struct HookCoreTests {
         expect(StatusPolicy.shouldAnimate(userEnabled: true, reduceMotion: false), "animation runs when enabled")
         expect(!StatusPolicy.shouldAnimate(userEnabled: true, reduceMotion: true), "reduced motion disables animation")
         expect(StatusPolicy.versionIsNewer("0.1.10", than: "0.1.9"), "version comparison is numeric")
+        let transcript = Data("""
+        {"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+        {"type":"event_msg","payload":{"type":"turn_aborted","turn_id":"turn-1","reason":"interrupted"}}
+        """.utf8)
+        expect(StatusPolicy.turnWasAborted(in: transcript, turnID: "turn-1"), "current turn abort is detected")
+        expect(!StatusPolicy.turnWasAborted(in: transcript, turnID: "turn-2"), "old turn abort is ignored")
 
         if failures > 0 { exit(1) }
-        print("HookCoreTests: 23 passed")
+        print("HookCoreTests: 26 passed")
     }
 }

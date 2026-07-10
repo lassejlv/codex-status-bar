@@ -12,7 +12,7 @@ It uses Codex's documented lifecycle hooks to show when Codex is thinking, using
 - Optional elapsed time and thinking words.
 - Session rows with project, Git branch, surface, and state.
 
-The app is local-only. It does not read transcripts, collect telemetry, use an API key, or require Node, npm, Bun, or another runtime.
+The app is local-only. It does not read message content, collect telemetry, use an API key, or require Node, npm, Bun, or another runtime. To recover immediately when Esc interrupts a turn, it checks only the structured event envelopes at the tail of the active local session file for Codex's `turn_aborted` marker.
 
 ## Build and install
 

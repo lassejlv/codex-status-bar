@@ -44,8 +44,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Bundle the Codex source mark used by the menu bar renderer.
-cp codex.svg "$APP/Contents/Resources/codex.svg"
+# Bundle the locally installed Codex pet-style app mark used by the menu bar renderer.
+cp assets/CodexPet.png "$APP/Contents/Resources/CodexPet.png"
 
 # --- Signing / notarization ---
 # For a clean (no Gatekeeper warning) release you need, set up once on this Mac:

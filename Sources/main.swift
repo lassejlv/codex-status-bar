@@ -266,7 +266,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     var stalePruneAge: TimeInterval { UserDefaults.standard.object(forKey: "hideIdleAfter") as? Double ?? 900 }
 
     struct Session {
-        var id: String, state: String, label: String, project: String, transcript: String
+        var id: String, state: String, label: String, project: String, transcript: String, turnID: String
         var cwd: String         // session working directory; "" on pre-upgrade files
         var entrypoint: String  // reliable surface hint when Codex exposes one
         var termProgram: String // TERM_PROGRAM for CLI sessions: "Apple_Terminal", "iTerm.app", …
@@ -284,6 +284,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             self.label = o["label"] as? String ?? ""
             self.project = o["project"] as? String ?? ""
             self.transcript = o["transcript"] as? String ?? ""
+            self.turnID = o["turnId"] as? String ?? ""
             self.cwd = o["cwd"] as? String ?? ""
             self.entrypoint = o["surface"] as? String ?? o["entrypoint"] as? String ?? ""
             self.termProgram = o["term_program"] as? String ?? ""
@@ -303,11 +304,9 @@ final class StatusController: NSObject, NSMenuDelegate {
     var startedAt: Double = 0  // unix seconds the current turn began (0 = no clock)
     var activeColor: NSColor? = nil
 
-    let brand = NSColor(srgbRed: 0.93, green: 0.36, blue: 0.20, alpha: 1)
     let amber = NSColor(srgbRed: 0.95, green: 0.73, blue: 0.18, alpha: 1) // "awaiting permission" yellow dot
     var animateIcon = true
     var showTimer = false
-    var iconSystem = false // false = brand Orange; true = adaptive black/white (template image)
     var useThinkingWords = true     // rotate a playful verb ("Manifesting…") in place of "Thinking…"
     var sessionWord: [String: String] = [:] // id -> current thinking word; re-picked on each entry into "thinking"
     // Short working words keep the menu bar lively without widening it too aggressively.
@@ -337,7 +336,7 @@ final class StatusController: NSObject, NSMenuDelegate {
         "Thinking", "Thundering", "Tinkering", "Tomfoolering", "Transfiguring", "Transmuting", "Twisting",
         "Undulating", "Unfurling", "Unravelling", "Vibing", "Waddling", "Wandering", "Warping",
         "Whirlpooling", "Whirring", "Whisking", "Wibbling", "Working", "Wrangling", "Zesting", "Zigzagging"]
-    var iconColor: NSColor? { iconSystem ? nil : brand } // nil => render as an adaptive template
+    var iconColor: NSColor? { nil } // the Codex pet mark keeps its native full color
     let fps: Double = 20
     let frameCount = 120
 
@@ -345,7 +344,6 @@ final class StatusController: NSObject, NSMenuDelegate {
         super.init()
         let d = UserDefaults.standard
         if d.object(forKey: "showTimer") != nil { showTimer = d.bool(forKey: "showTimer") }
-        if d.object(forKey: "iconSystem") != nil { iconSystem = d.bool(forKey: "iconSystem") }
         if d.object(forKey: "thinkingWords") != nil { useThinkingWords = d.bool(forKey: "thinkingWords") }
         if d.object(forKey: "animateIcon") != nil { animateIcon = d.bool(forKey: "animateIcon") }
         let menu = NSMenu()
@@ -541,18 +539,6 @@ final class StatusController: NSObject, NSMenuDelegate {
             self?.animTimer?.invalidate(); self?.animTimer = nil
             self?.evaluate()
         })
-
-        let colorParent = NSMenuItem(title: "Color", action: nil, keyEquivalent: "")
-        let colorSub = NSMenu()
-        for (sys, name) in [(false, "Orange"), (true, "System")] {
-            let it = NSMenuItem(title: name, action: #selector(chooseColor(_:)), keyEquivalent: "")
-            it.target = self
-            it.representedObject = sys
-            it.state = iconSystem == sys ? .on : .off
-            colorSub.addItem(it)
-        }
-        colorParent.submenu = colorSub
-        menu.addItem(colorParent)
 
         menu.addItem(.separator())
         let hooksItem = NSMenuItem(title: hooksAreInstalled ? "Reinstall Hooks…" : "Install Hooks…", action: #selector(installHooks), keyEquivalent: "")
@@ -815,13 +801,6 @@ final class StatusController: NSObject, NSMenuDelegate {
     }
 
 
-    @objc func chooseColor(_ sender: NSMenuItem) {
-        guard let sys = sender.representedObject as? Bool else { return }
-        iconSystem = sys
-        UserDefaults.standard.set(iconSystem, forKey: "iconSystem")
-        evaluate() // re-render the current state in the new color
-    }
-
     // MARK: state polling
 
     func tick() {
@@ -983,9 +962,21 @@ final class StatusController: NSObject, NSMenuDelegate {
         if s.state == "thinking" || s.state == "tool" || s.state == "permission" {
             let cap: Double = s.state == "permission" ? 7200 : 900
             if now - s.ts > cap { return "idle" }
+            if turnWasAborted(transcriptPath: s.transcript, turnID: s.turnID) { return "idle" }
             return s.state
         }
         return s.state == "done" ? "idle" : s.state
+    }
+
+    func turnWasAborted(transcriptPath: String, turnID: String) -> Bool {
+        guard !transcriptPath.isEmpty, !turnID.isEmpty,
+              let handle = FileHandle(forReadingAtPath: transcriptPath) else { return false }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        let window: UInt64 = 32 * 1024
+        try? handle.seek(toOffset: size > window ? size - window : 0)
+        guard let data = try? handle.readToEnd() else { return false }
+        return StatusPolicy.turnWasAborted(in: data, turnID: turnID)
     }
 
 
@@ -1079,7 +1070,7 @@ final class StatusController: NSObject, NSMenuDelegate {
     // MARK: icon
 
     lazy var codexMark: NSImage = {
-        if let path = Bundle.main.path(forResource: "codex", ofType: "svg"),
+        if let path = Bundle.main.path(forResource: "CodexPet", ofType: "png"),
            let image = NSImage(contentsOfFile: path) { return image }
         return NSImage(systemSymbolName: "chevron.left.forwardslash.chevron.right", accessibilityDescription: "Codex")
             ?? NSImage(size: NSSize(width: 18, height: 18))
@@ -1087,18 +1078,18 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     func iconImage(color: NSColor?, frame: Int) -> NSImage {
         let phase = CGFloat(frame % frameCount) / CGFloat(frameCount) * .pi * 2
-        let scale = 0.91 + 0.07 * ((sin(phase) + 1) / 2)
+        let scale = 0.84 + 0.08 * ((sin(phase) + 1) / 2)
         let rotation = 4.0 * sin(phase)
         return codexIcon(color: color, scale: scale, rotationDegrees: rotation)
     }
 
     func restingIcon(color: NSColor?) -> NSImage {
-        codexIcon(color: color, scale: 0.95, rotationDegrees: 0)
+        codexIcon(color: color, scale: 0.88, rotationDegrees: 0)
     }
 
-    func codexIcon(color: NSColor?, scale: CGFloat, rotationDegrees: CGFloat) -> NSImage {
+    func codexIcon(color _: NSColor?, scale: CGFloat, rotationDegrees: CGFloat) -> NSImage {
         let side: CGFloat = 18
-        let mask = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
+        let img = NSImage(size: NSSize(width: side, height: side), flipped: false) { _ in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
             context.saveGState()
             context.translateBy(x: side / 2, y: side / 2)
@@ -1109,16 +1100,7 @@ final class StatusController: NSObject, NSMenuDelegate {
             context.restoreGState()
             return true
         }
-        let img = NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
-            if let color {
-                color.setFill(); rect.fill()
-                mask.draw(in: rect, from: .zero, operation: .destinationIn, fraction: 1)
-            } else {
-                mask.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
-            }
-            return true
-        }
-        img.isTemplate = (color == nil)
+        img.isTemplate = false
         return img
     }
 

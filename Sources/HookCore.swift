@@ -23,6 +23,19 @@ enum StatusPolicy {
         }
         return false
     }
+
+    static func turnWasAborted(in data: Data, turnID: String) -> Bool {
+        guard !turnID.isEmpty, let text = String(data: data, encoding: .utf8) else { return false }
+        for line in text.split(separator: "\n").reversed() {
+            guard let lineData = String(line).data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                  object["type"] as? String == "event_msg",
+                  let payload = object["payload"] as? [String: Any],
+                  payload["turn_id"] as? String == turnID else { continue }
+            return payload["type"] as? String == "turn_aborted"
+        }
+        return false
+    }
 }
 
 enum HookEventMapper {
@@ -79,6 +92,7 @@ enum HookEventMapper {
             "cwd": cwd,
             "sessionId": sessionID,
             "turnId": payload["turn_id"] as? String ?? previous["turnId"] as? String ?? "",
+            "transcript": payload["transcript_path"] as? String ?? previous["transcript"] as? String ?? "",
             "model": payload["model"] as? String ?? previous["model"] as? String ?? "",
             "surface": payload["surface"] as? String ?? previous["surface"] as? String ?? "",
             "term_program": payload["term_program"] as? String ?? previous["term_program"] as? String ?? "",

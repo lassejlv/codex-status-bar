@@ -34,7 +34,7 @@ Codex Status Bar uses the documented Codex lifecycle hook interface. It installs
 
 Every hook receives JSON on standard input. The implementation uses documented common fields including `session_id`, `cwd`, `transcript_path`, `hook_event_name`, and `model`, plus event-specific fields such as `turn_id` and `tool_name`.
 
-The app does not rely on transcript contents. `transcript_path` may be stored for diagnostics but is not parsed because the Codex documentation identifies transcript format as unstable.
+The app does not inspect transcript messages. Because Codex does not emit `Stop` when Esc interrupts a turn, the app may read a bounded tail of the active local session file and parse only structured event envelopes for a `turn_aborted` event matching the current `turn_id`.
 
 Codex does not currently document a `SessionEnd` event. CLI state is therefore reaped when the recorded parent Codex process exits. Desktop session files expire after a conservative idle period so a long-running desktop process cannot keep obsolete rows forever. The app itself may remain available while Codex Desktop is running.
 
@@ -106,13 +106,13 @@ The fork uses:
 
 The build script compiles the AppKit app and native hook helper for arm64 and x86_64, combines each binary with `lipo`, embeds the helper and icon resources, then signs the bundle. DMG packaging remains available, but all Claude-specific signing profile names, volume names, filenames, and copy are replaced.
 
-The provided `codex.svg` is the source artwork. The build produces an app icon and a monochrome template-compatible menu-bar asset from it. Generated icon artifacts belong in the build output rather than being checked in unless a checked-in raster is required for reproducible compilation.
+The supplied SVG is retained as source material, but its CoreSVG rendering is unreliable at menu-bar size. The app bundles the locally installed full-color Codex pet-style app mark as a stable high-resolution PNG.
 
 Release checks are disabled until this fork has an explicit repository URL. The app must not continue checking the upstream Claude Status Bar repository.
 
 ## Menu and Animation
 
-The existing AppKit menu, session rows, branch discovery, multi-session aggregation, timer rendering, and System/Orange color choice remain where provider-neutral.
+The existing AppKit menu, session rows, branch discovery, multi-session aggregation, and timer rendering remain where provider-neutral.
 
 Claude-specific animation assets and names are removed. Working state uses the Codex mark with a restrained animation:
 
@@ -126,7 +126,6 @@ Settings are:
 - Animate Codex icon
 - Show timer
 - Thinking words
-- Icon color: Orange or System
 - Hide idle sessions after a selected duration
 
 Reduced-motion behavior disables pulse and rotation and keeps a static working icon. The status label and timer continue to update.
@@ -194,7 +193,7 @@ README, privacy, troubleshooting, contributing, changelog, plugin metadata, and 
 
 ## Out of Scope
 
-- Parsing Codex transcripts or private app databases.
+- Parsing conversation messages or private app databases.
 - Usage, token, cost, or rate-limit dashboards.
 - Sending task data to a server.
 - Automatically bypassing Codex hook trust.
