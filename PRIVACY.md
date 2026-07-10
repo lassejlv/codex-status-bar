@@ -1,6 +1,7 @@
 # Privacy
 
-Claude Status Bar collects no data and has no servers. It runs entirely on your Mac. Its one network call is a once-a-day check to GitHub's public API for the latest release tag, used only to show "Update available" in the menu. Nothing is sent to the developer (as with any update check or download, GitHub sees the request; the developer never does).
+Codex Status Bar runs locally and collects no telemetry.
 
----
-Back to the [README](README.md).
+The hook helper receives Codex's documented hook metadata and stores only status, timestamps, project directory, model identifier, tool name, surface, and process identifiers under `~/.codex/statusbar/state.d`. It does not read the transcript path or conversation content.
+
+The app makes no network requests. It modifies `~/.codex/hooks.json` only after explicit confirmation and creates at most one backup named `hooks.json.bak-codex-statusbar`.

@@ -1,114 +1,62 @@
-<a href="https://github.com/m1ckc3s/claude-status-bar/releases/latest/download/ClaudeStatusBar.dmg"><img src="assets/download.png" alt="Download ClaudeStatusBar.dmg for macOS" width="220"></a>
-<br>
-**Signed and notarized by Apple**
-## Claude Status Bar
+# Codex Status Bar
 
-A tiny macOS menu bar app that shows **Claude Code's live status**: an animated Claude icon while it's thinking or running a tool, a yellow dot when it's awaiting your permission, and the elapsed time of the current turn. Lightweight, no window, no dock icon, no usage dashboards.
+A tiny native macOS menu-bar app that shows live Codex task state across Codex CLI and Codex Desktop.
 
-> Built so you can tab away during a long "thinking" stretch and still see, at a glance, whether Claude is working, waiting on you, or done.
-
-<img width="600" height="479" alt="Screen Recording 2026-07-10 at 12 32 23 AM" src="https://github.com/user-attachments/assets/f5d77b7c-f41d-4276-b28f-e1cf655fd323" />
-
----
+It uses Codex's documented lifecycle hooks to show when Codex is thinking, using a tool, waiting for permission, or idle. Multiple sessions are aggregated so a permission request is never hidden behind ordinary work.
 
 ## What it shows
 
-- **Thinking / working** — the icon animates, with a live `1m 1s` timer.
-- **Running a tool** — a short label (`Editing`, `Reading`, `Running command`, `Using tool`, …).
-- **Awaiting permission** — a paused yellow dot, in both the CLI and the Desktop app.
-- **Idle / done** — rests on the Claude logo.
+- A resting Codex mark when idle.
+- A subtle pulse and rotation while working.
+- A yellow indicator when Codex needs permission.
+- Optional elapsed time and thinking words.
+- Session rows with project, Git branch, surface, and state.
 
-Everything is controlled from the menu:
+The app is local-only. It does not read transcripts, collect telemetry, use an API key, or require Node, npm, Bun, or another runtime.
 
-- **Show timer:** toggle the elapsed `1m 1s` clock.
-- **Thinking words:** rotate a playful verb (`Manifesting…`, `Percolating…`) in place of `Thinking…`, like Claude Code (on by default).
-- **Animation style:**
-  - **Claude Spark**, the web/chat "morph" spark
-  - **Claude Code**, the terminal glyph spinner
-  - **Crab Walking**, a pixel-art Clawd crab that scuttles while Claude works
-- **Icon color:** **Orange** or **System** (adaptive black/white). All three styles follow this setting: in System mode Crab Walking renders as a shaded monochrome silhouette that matches the menu bar.
-- **Version and update:** the menu shows your current version, with a one-click "Update available" when a newer release exists.
+## Build and install
 
-**Multi-session support.** When several Claude Code sessions run at once (multiple terminals, or a terminal plus the desktop app), the menu bar surfaces the highest-priority one: a session awaiting your permission is never hidden behind one that's thinking. The dropdown lists every live session. Precise per-tab focus is in progress: **[issue #19 →](https://github.com/m1ckc3s/claude-status-bar/issues/19)**.
-
-## Where it works
-
-| Surface | Tracked? |
-|---|---|
-| Claude Code CLI (terminal) | ✅ |
-| Claude Code Desktop — **Code** tab | ✅ |
-| Cursor (Claude Code extension) | ✅ |
-| Claude Desktop — **Chat/Cowork** tab | ❌ |
-
-## Install
-
-### Option A — DMG (recommended) 
-
-Signed and notarized.
-
-1. Download the latest `ClaudeStatusBar.dmg` from [Releases](../../releases).
-2. Open it and drag **Claude Status Bar** into Applications.
-3. Launch it once. On first launch it wires up the Claude Code hooks for you automatically.
-4. Start a new Claude Code session, the icon appears whenever Claude Code is running.
-
-### Updating
-
-> [!IMPORTANT]
-> **Updated mid-session?** Sessions already open won't show up until they do something (send a prompt) or you start a new `claude` session.
-
-Download the latest DMG and drag it into Applications (choose **Replace**). That's it: it refreshes its own hooks the next time it starts up (on a version change it re-runs its installer automatically), so there's nothing to run by hand. Your next Claude Code session picks them up.
-
-## Requirements
-
-- macOS 12+
-- [Claude Code](https://claude.com/claude-code) (CLI or the Desktop app)
-- Node.js
-
-
-### Option B — Claude Code plugin
-
-Installs the hooks (status + open/close lifecycle) automatically from inside Claude Code:
-
-```
-/plugin marketplace add m1ckc3s/claude-status-bar
-/plugin install claude-status-bar@claude-status-bar
-```
-
-The plugin installs the hooks but not the app itself, so drag **Claude Status Bar** into Applications once (from the DMG). The plugin launches it automatically on session start.
-
-## How it works
-
-The app is stateless. Claude Code fires hooks as it works; the app polls those updates and aggregates them across every live session into a single icon, a permission dot if one needs you, animating if any session is working, resting when all are idle. It launches itself when Claude Code opens and quits when nothing's running, so there's nothing to manage.
-
-The installer merges its hooks into `~/.claude/settings.json` (backing it up first), and the app's only network call is a once-a-day GitHub release check ([details](PRIVACY.md)).
-
-## Troubleshooting
-
-Icon quitting right after you open it, not showing, or not moving in Cursor? See [Troubleshooting](TROUBLESHOOTING.md), most of it is expected behavior, not a bug.
-
-## Uninstall
+Requirements: macOS 12+ and Xcode Command Line Tools.
 
 ```bash
-node "/Applications/ClaudeStatusBar.app/Contents/Resources/uninstall.js"   # removes only our hooks
+./build.sh
+open build/CodexStatusBar.app
 ```
-Then drag the app to the Trash.
 
-## Acknowledgements
+For a DMG:
 
-I built this for myself, then open-sourced it because other people might find it handy too, and I'm genuinely thrilled that so many of you do. An extra thank-you to everyone who went the extra mile and contributed code, fixes, and ideas.
+```bash
+./build.sh --dmg
+```
 
-**[See the contributors →](ACKNOWLEDGEMENTS.md)**
+On first launch, Codex Status Bar asks before changing anything. Choose **Install** to merge its commands into `~/.codex/hooks.json`. Existing hooks are preserved and the original file is backed up once.
 
-## Trademark / Not Affiliated
+Then open `/hooks` in Codex, review the six Codex Status Bar commands, and trust them. Codex intentionally skips new hooks until you approve their exact definitions.
 
-This is an unofficial, open-source side project. **It is not affiliated with, endorsed by, or sponsored by Anthropic.** "Claude" and the Claude spark logo are trademarks of Anthropic, used here nominatively. This project is MIT licensed, but that covers the source code only and conveys no rights to Anthropic's trademarks or brand.
+## Supported events
 
-If I'm violating or impeding your trademark, Contact me on X ([@mickces](https://x.com/mickces))
-This is a free side project; I'm not monetizing it.
+- `SessionStart`
+- `UserPromptSubmit`
+- `PreToolUse`
+- `PostToolUse`
+- `PermissionRequest`
+- `Stop`
 
-## Contributing
+CLI sessions are removed when their Codex process exits. Codex currently has no documented `SessionEnd` hook, so idle Desktop rows expire by age.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for what fits, what doesn't, and how to build.
+## Uninstall hooks
+
+Use **Reinstall Hooks…** to repair moved helper paths. Choose **Uninstall Hooks…** to remove only Codex Status Bar's marked commands while preserving every unrelated hook.
+
+## Testing
+
+```bash
+scripts/test.sh
+swiftc -typecheck Sources/*.swift -framework Cocoa
+./build.sh
+```
+
+See [PRIVACY.md](PRIVACY.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md), and [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
