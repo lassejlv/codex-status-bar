@@ -155,6 +155,13 @@ struct HookCoreTests {
         selected-avatar-id = "custom:unckle-stuart"
         """
         expect(PetAssetLocator.selectedPetID(configText: config) == "unckle-stuart", "selected custom pet is parsed")
+        let switchedPet = PetAssetLocator.configSelectingPet(
+            configText: "model = \"gpt-5\"\nselected-avatar-id = \"custom:old-pet\" # keep me\n",
+            petID: "new-pet"
+        )
+        expect(switchedPet == "model = \"gpt-5\"\nselected-avatar-id = \"custom:new-pet\" # keep me\n", "pet switch preserves config and inline comment")
+        expect(PetAssetLocator.configSelectingPet(configText: "model = \"gpt-5\"\n", petID: "new-pet") == "model = \"gpt-5\"\nselected-avatar-id = \"custom:new-pet\"\n", "missing pet setting is appended")
+        expect(PetAssetLocator.configSelectingPet(configText: config, petID: "bad\"\nmodel = 'oops'") == nil, "unsafe pet id is rejected")
         let atlas = PetAtlasLayout(width: 1536, height: 1872)
         expect(atlas?.rows == 9, "v1 pet atlas is recognized")
         expect(atlas?.sourceRect(row: 0, column: 0).origin.y == 1664, "idle row crops from atlas top")

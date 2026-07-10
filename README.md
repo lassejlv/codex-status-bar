@@ -11,7 +11,7 @@ It uses Codex's documented lifecycle hooks to show when Codex is thinking, using
 - `Herding an agent…` or `Herding N agents…` while Codex delegates work.
 - The pet's native idle, directional-running, hand-motion, review, waiting, and completion animations based on the current action.
 - A yellow indicator when Codex needs permission.
-- An optional elapsed timer, three pet sizes, and a `Reload pet` action for refreshing the selected local pet without restarting.
+- An optional elapsed timer, a checked local-pet picker, three pet sizes, and a `Reload pet` action—all without restarting.
 - Session rows with project, surface, and state.
 
 The app is local-only. It does not read message content, collect telemetry, use an API key, or require Node, npm, Bun, or another runtime. To recover immediately when Esc interrupts a turn, it checks only the structured event envelopes at the tail of the active local session file for Codex's `turn_aborted` marker.

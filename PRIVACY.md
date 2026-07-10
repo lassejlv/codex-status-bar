@@ -6,4 +6,4 @@ The hook helper receives Codex's documented hook metadata and stores status, tim
 
 The app makes no network requests. It modifies `~/.codex/hooks.json` only after explicit confirmation and creates at most one backup named `hooks.json.bak-codex-statusbar`.
 
-The app reads `selected-avatar-id` from `~/.codex/config.toml` and the selected pet's `pet.json` plus spritesheet under `~/.codex/pets` to render local status icons.
+The app reads `selected-avatar-id` from `~/.codex/config.toml` and the selected pet's `pet.json` plus spritesheet under `~/.codex/pets` to render local status icons. Choosing a pet from the menu updates only the `selected-avatar-id` assignment in `config.toml`; unrelated settings and comments are preserved.

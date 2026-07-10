@@ -2,6 +2,12 @@ import Foundation
 import CoreGraphics
 
 enum PetAssetLocator {
+    static func isSafePetID(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 128 else { return false }
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+        return value.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
+
     static func selectedPetID(configText: String) -> String? {
         for rawLine in configText.split(separator: "\n") {
             let line = rawLine.split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
@@ -13,6 +19,26 @@ enum PetAssetLocator {
             return id.isEmpty ? nil : id
         }
         return nil
+    }
+
+    static func configSelectingPet(configText: String, petID: String) -> String? {
+        guard isSafePetID(petID) else { return nil }
+        let replacement = "selected-avatar-id = \"custom:\(petID)\""
+        var lines = configText.components(separatedBy: "\n")
+
+        for index in lines.indices {
+            let raw = lines[index]
+            let uncommented = raw.split(separator: "#", maxSplits: 1).first.map(String.init) ?? ""
+            let pair = uncommented.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+            guard pair.count == 2, pair[0] == "selected-avatar-id" else { continue }
+            let indent = String(raw.prefix { $0 == " " || $0 == "\t" })
+            let comment = raw.firstIndex(of: "#").map { " " + String(raw[$0...]) } ?? ""
+            lines[index] = indent + replacement + comment
+            return lines.joined(separator: "\n")
+        }
+
+        if configText.isEmpty { return replacement + "\n" }
+        return configText + (configText.hasSuffix("\n") ? "" : "\n") + replacement + "\n"
     }
 }
 

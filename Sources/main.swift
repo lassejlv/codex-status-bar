@@ -335,6 +335,8 @@ final class StatusController: NSObject, NSMenuDelegate {
     var currentVersion: String { (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "0" }
 
     var hooksURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/hooks.json") }
+    var codexConfigURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/config.toml") }
+    var petsURL: URL { FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex/pets", isDirectory: true) }
     var hookHelperPath: String? { Bundle.main.path(forResource: "CodexStatusHook", ofType: nil) }
     var hooksAreInstalled: Bool {
         guard let data = try? Data(contentsOf: hooksURL) else { return false }
@@ -501,6 +503,25 @@ final class StatusController: NSObject, NSMenuDelegate {
             self?.animTimer?.invalidate(); self?.animTimer = nil
             self?.evaluate()
         })
+
+        let petItem = NSMenuItem(title: "Pet", action: nil, keyEquivalent: "")
+        let petMenu = NSMenu()
+        let pets = availablePets()
+        if pets.isEmpty {
+            let empty = NSMenuItem(title: "No local pets found", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            petMenu.addItem(empty)
+        } else {
+            for pet in pets {
+                let item = NSMenuItem(title: pet.displayName, action: #selector(selectPet(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = pet.id
+                item.state = pet.id == selectedPet?.id ? .on : .off
+                petMenu.addItem(item)
+            }
+        }
+        petItem.submenu = petMenu
+        menu.addItem(petItem)
 
         let petSizeItem = NSMenuItem(title: "Pet size", action: nil, keyEquivalent: "")
         let petSizeMenu = NSMenu()
@@ -735,6 +756,27 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     @objc func quit() { NSApp.terminate(nil) }
 
+    @objc func selectPet(_ sender: NSMenuItem) {
+        guard let petID = sender.representedObject as? String else { return }
+        let config = (try? String(contentsOf: codexConfigURL, encoding: .utf8)) ?? ""
+        guard let updated = PetAssetLocator.configSelectingPet(configText: config, petID: petID) else {
+            showPetError("The selected pet could not be written to \(codexConfigURL.path).")
+            return
+        }
+        do {
+            let permissions = (try? FileManager.default.attributesOfItem(atPath: codexConfigURL.path)[.posixPermissions]) as? NSNumber
+            try FileManager.default.createDirectory(at: codexConfigURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try updated.write(to: codexConfigURL, atomically: true, encoding: .utf8)
+            if let permissions {
+                try FileManager.default.setAttributes([.posixPermissions: permissions], ofItemAtPath: codexConfigURL.path)
+            }
+            selectedPet = loadSelectedPet()
+            evaluate()
+        } catch {
+            showPetError("Codex Status Bar could not save your pet selection. \(error.localizedDescription)")
+        }
+    }
+
     @objc func selectPetSize(_ sender: NSMenuItem) {
         guard let points = sender.representedObject as? Int else { return }
         petDisplaySize = PetDisplaySize.from(persistedPoints: points)
@@ -745,6 +787,15 @@ final class StatusController: NSObject, NSMenuDelegate {
     @objc func reloadPet() {
         selectedPet = loadSelectedPet()
         evaluate()
+    }
+
+    func showPetError(_ message: String) {
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Pet update failed"
+        alert.informativeText = message
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     @objc func openCodex() {
@@ -996,7 +1047,13 @@ final class StatusController: NSObject, NSMenuDelegate {
 
     // MARK: icon
 
+    struct LocalPet {
+        let id: String
+        let displayName: String
+    }
+
     struct LoadedPet {
+        let id: String
         let image: NSImage
         let layout: PetAtlasLayout
     }
@@ -1016,11 +1073,23 @@ final class StatusController: NSObject, NSMenuDelegate {
         return dotIcon(base: frame, color: dotColor)
     }
 
+    func availablePets() -> [LocalPet] {
+        let ids = (try? FileManager.default.contentsOfDirectory(atPath: petsURL.path)) ?? []
+        return ids.compactMap { id in
+            guard PetAssetLocator.isSafePetID(id) else { return nil }
+            let directory = petsURL.appendingPathComponent(id, isDirectory: true)
+            let manifestURL = directory.appendingPathComponent("pet.json")
+            guard let data = try? Data(contentsOf: manifestURL),
+                  let manifest = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let relativePath = manifest["spritesheetPath"] as? String,
+                  FileManager.default.fileExists(atPath: directory.appendingPathComponent(relativePath).path) else { return nil }
+            let displayName = (manifest["displayName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return LocalPet(id: id, displayName: displayName.isEmpty ? id : displayName)
+        }.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+    }
+
     func loadSelectedPet() -> LoadedPet? {
-        let home = FileManager.default.homeDirectoryForCurrentUser
-        let configURL = home.appendingPathComponent(".codex/config.toml")
-        let petsURL = home.appendingPathComponent(".codex/pets", isDirectory: true)
-        let config = (try? String(contentsOf: configURL, encoding: .utf8)) ?? ""
+        let config = (try? String(contentsOf: codexConfigURL, encoding: .utf8)) ?? ""
         var petID = PetAssetLocator.selectedPetID(configText: config)
         if petID == nil {
             petID = (try? FileManager.default.contentsOfDirectory(atPath: petsURL.path))?
@@ -1035,7 +1104,7 @@ final class StatusController: NSObject, NSMenuDelegate {
               let image = NSImage(contentsOf: directory.appendingPathComponent(relativePath)),
               let representation = image.representations.max(by: { $0.pixelsWide < $1.pixelsWide }),
               let layout = PetAtlasLayout(width: representation.pixelsWide, height: representation.pixelsHigh) else { return nil }
-        return LoadedPet(image: image, layout: layout)
+        return LoadedPet(id: petID, image: image, layout: layout)
     }
 
     func petFrame(row: Int, column: Int) -> NSImage? {
